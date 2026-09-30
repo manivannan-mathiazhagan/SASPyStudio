@@ -1,16 +1,16 @@
 """
 *******************************************************************************
-*** Program Name:   SASPyStudio.py                                          ***
+*** Program Name:   SASPyStudio.py                                        ***
 ***                                                                         ***
-*** Application:    SASPy Studio                                            ***
-*** Version:        1.0                                                     ***
+*** Application:    SASPy Studio                                           ***
+*** Version:        1.0                                                    ***
 ***                                                                         ***
-*** Purpose:        Provide a lightweight desktop interface for executing   ***
-***                 local SAS programs using SAS OnDemand for Academics     ***
-***                 through SASPy.                                          ***
+*** Purpose:        Provide a lightweight desktop interface for executing  ***
+***                 local SAS programs using SAS OnDemand for Academics    ***
+***                 through SASPy.                                         ***
 ***-------------------------------------------------------------------------***
-*** Programmed By:  Manivannan Mathialagan                                  ***
-*** Created On:     30Sep2026                                               ***
+*** Programmed By:  Manivannan Mathialagan                                 ***
+*** Created On:     30Sep2026                                              ***
 ***-------------------------------------------------------------------------***
 *** Process:        1. Connect to SAS OnDemand.                             ***
 ***                 2. Create and synchronize the remote study workspace.   ***
@@ -23,31 +23,29 @@
 ***                 9. Synchronize outputs to the local study structure.    ***
 ***                10. End the SAS session.                                 ***
 ***-------------------------------------------------------------------------***
-*** Security:       SAS OnDemand credentials are read from the private      ***
+*** Security:       SAS OnDemand credentials are read from the private     ***
 ***                 _authinfo file configured in sas_config.json.           ***
 ***                 Authentication files must not be committed to source    ***
 ***                 control.                                                ***
 ***-------------------------------------------------------------------------***
-*** Notes:          Local SAS programs remain platform independent.         ***
+*** Notes:          Programs Location points to the repository root.        ***
+***                 SASPy Studio automatically uses the /sas subfolder for  ***
+***                 AUTOEXEC, macros, program_plan.xlsx and SAS programs.   ***
+***                                                                         ***
+***                 Local SAS programs remain platform independent.         ***
 ***                 Windows study paths are translated as required when     ***
 ***                 programs are submitted to SAS OnDemand/Linux.           ***
-***                                                                         ***
-***                 Remote study files are temporarily synchronized to      ***
-***                 the SAS WORK location during program execution.         ***
 ***-------------------------------------------------------------------------***
-*** Change History:                                                         ***
+*** Change History:                                                        ***
 ***                                                                         ***
 *** Version   Date         Description                                      ***
-*** -------   -----------  -------------------------------------------------***
+*** -------   -----------  ------------------------------------------------ ***
 *** 1.0       30Sep2026    Initial release of SASPy Studio with SASPy       ***
-***                        connectivity, remote study synchronization,      ***
-***                        AUTOEXEC execution, RAW/SDTM/ADAM library        ***
-***                        assignment, global/study macro loading, program  ***
-***                        execution, log/result handling and output        ***
-***                        synchronization.                                 ***
+***                        connectivity, study synchronization, library      ***
+***                        assignment, macro loading, program execution,     ***
+***                        log/result handling and output synchronization.   ***
 *******************************************************************************
 """
-
 
 import json
 import os
@@ -200,8 +198,8 @@ class SASPyStudio(tk.Tk):
         super().__init__()
 
         self.title("SASPy Studio")
-        self.geometry("1120x820")
-        self.minsize(980, 700)
+        self.geometry("1180x650")
+        self.minsize(1050, 590)
 
         # Project locations. The finalized repository/study structure is derived from these roots.
         self.study_root = tk.StringVar()
@@ -381,6 +379,55 @@ class SASPyStudio(tk.Tk):
                         fill="white", outline="#AAB2BF", width=1
                     )
 
+        class ToolTip:
+            def __init__(self, widget, text, delay=450):
+                self.widget = widget
+                self.text = text
+                self.delay = delay
+                self.tip = None
+                self.after_id = None
+                widget.bind("<Enter>", self._schedule, add="+")
+                widget.bind("<Leave>", self._hide, add="+")
+                widget.bind("<ButtonPress>", self._hide, add="+")
+
+            def _schedule(self, _event=None):
+                self._cancel()
+                self.after_id = self.widget.after(self.delay, self._show)
+
+            def _cancel(self):
+                if self.after_id:
+                    try:
+                        self.widget.after_cancel(self.after_id)
+                    except tk.TclError:
+                        pass
+                    self.after_id = None
+
+            def _show(self):
+                if self.tip or not self.text:
+                    return
+                x = self.widget.winfo_pointerx() + 14
+                y = self.widget.winfo_pointery() + 18
+                self.tip = tk.Toplevel(self.widget)
+                self.tip.wm_overrideredirect(True)
+                self.tip.wm_geometry(f"+{x}+{y}")
+                tk.Label(
+                    self.tip, text=self.text, justify="left",
+                    bg="#FFFBEA", fg="#1F2937", relief="solid", bd=1,
+                    font=("Segoe UI", 8), padx=7, pady=4
+                ).pack()
+
+            def _hide(self, _event=None):
+                self._cancel()
+                if self.tip:
+                    self.tip.destroy()
+                    self.tip = None
+
+        def add_tooltip(widget, text):
+            ToolTip(widget, text)
+            # Composite checkbox controls need hover help on both the box and label.
+            for child in widget.winfo_children():
+                ToolTip(child, text)
+
         self._RoundedButton = RoundedButton
 
         header = tk.Frame(self, bg=BG)
@@ -398,165 +445,173 @@ class SASPyStudio(tk.Tk):
             font=("Segoe UI", 9, "bold")
         ).pack(side="left", padx=(12, 0), pady=(6, 0))
 
-        # ---------- Project ----------
-        project_card = ttk.LabelFrame(
-            self, text="Project", style="Card.TLabelframe"
+        # ---------- Study setup and execution ----------
+        setup_card = ttk.LabelFrame(
+            self, text="Study Setup & Execution", style="Card.TLabelframe"
         )
-        project_card.pack(fill="x", padx=20, pady=(0, 8))
-        project_card.columnconfigure(1, weight=1)
+        setup_card.pack(fill="x", padx=20, pady=(0, 5))
 
-        project_rows = [
-            ("Study Location:", self.study_root, lambda: self.browse_folder(self.study_root)),
-            ("Programs Location:", self.programs_root, lambda: self.browse_folder(self.programs_root)),
-            ("Global Macros:", self.global_macros_path, lambda: self.browse_folder(self.global_macros_path)),
+        # Two location/program controls per row to use the available width.
+        for col in (1, 4):
+            setup_card.columnconfigure(col, weight=1)
+
+        setup_items = [
+            (0, 0, "Study Location:", self.study_root,
+             lambda: self.browse_folder(self.study_root), "#7C3AED"),
+            (0, 3, "Programs Location:", self.programs_root,
+             lambda: self.browse_folder(self.programs_root), "#7C3AED"),
+            (1, 0, "Global Macros:", self.global_macros_path,
+             lambda: self.browse_folder(self.global_macros_path), "#7C3AED"),
+            (1, 3, "Program:", self.program_path,
+             self.browse_manual_program, "#3B82F6"),
         ]
-        for row, (label, variable, command) in enumerate(project_rows):
-            ttk.Label(project_card, text=label, style="Card.TLabel").grid(
-                row=row, column=0, padx=(12, 8), pady=5, sticky="w"
-            )
-            ttk.Entry(project_card, textvariable=variable).grid(
-                row=row, column=1, padx=5, pady=5, sticky="ew"
-            )
-            wrap = tk.Frame(project_card, bg=PANEL)
-            wrap.grid(row=row, column=2, padx=(5, 12), pady=4)
-            RoundedButton(
-                wrap, "Browse", command, PURPLE, PURPLE_ACTIVE,
-                width=88, height=30, radius=9, font=("Segoe UI", 8, "bold")
-            ).pack()
 
-        tk.Label(
-            project_card,
-            text="Programs Location is the SAS folder. autoexec.sas, macros, program_plan.xlsx, production and validation folders are derived automatically.",
+        for row, col, label, variable, command, colour in setup_items:
+            ttk.Label(setup_card, text=label, style="Card.TLabel").grid(
+                row=row, column=col, padx=(10, 5), pady=3, sticky="w"
+            )
+            ttk.Entry(setup_card, textvariable=variable).grid(
+                row=row, column=col + 1, padx=(0, 4), pady=3, sticky="ew"
+            )
+            wrap = tk.Frame(setup_card, bg=PANEL)
+            wrap.grid(row=row, column=col + 2, padx=(0, 9), pady=2)
+            browse_btn = RoundedButton(
+                wrap, "Browse", command, colour,
+                "#9B63F0" if colour == "#7C3AED" else "#5C9CFF",
+                width=72, height=25, radius=8, font=("Segoe UI", 8, "bold")
+            )
+            browse_btn.pack()
+            add_tooltip(
+                browse_btn,
+                f"Browse and select the {label.rstrip(':').lower()}."
+            )
+
+        # Compact control/action row: use the full width of the setup card.
+        bottom_wrap = tk.Frame(setup_card, bg=PANEL)
+        bottom_wrap.grid(row=2, column=0, columnspan=6, padx=10, pady=(4, 5), sticky="ew")
+
+        plan_wrap = tk.Frame(bottom_wrap, bg=PANEL)
+        plan_wrap.pack(side="left")
+
+        self.plan_check = GreenCheck(plan_wrap, "Use Program Plan", self.use_program_plan)
+        self.plan_check.pack(side="left")
+        add_tooltip(
+            self.plan_check,
+            "When selected, run programs from sas/program_plan.xlsx instead of only the Program field."
+        )
+
+        self.plan_display = tk.Label(
+            plan_wrap, text="sas/program_plan.xlsx",
             bg=PANEL, fg=MUTED, font=("Segoe UI", 8)
-        ).grid(row=3, column=1, columnspan=2, padx=5, pady=(0, 7), sticky="w")
-
-        # ---------- Execution ----------
-        exec_card = ttk.LabelFrame(
-            self, text="Execution", style="Card.TLabelframe"
         )
-        exec_card.pack(fill="x", padx=20, pady=(0, 8))
-        exec_card.columnconfigure(1, weight=1)
-
-        ttk.Label(exec_card, text="Program:", style="Card.TLabel").grid(
-            row=0, column=0, padx=(12, 8), pady=6, sticky="w"
+        self.plan_display.pack(side="left", padx=(7, 5))
+        add_tooltip(
+            self.plan_display,
+            "Program plan is automatically derived from <Programs Location>/sas/program_plan.xlsx."
         )
-        ttk.Entry(exec_card, textvariable=self.program_path).grid(
-            row=0, column=1, padx=5, pady=6, sticky="ew"
-        )
-        program_wrap = tk.Frame(exec_card, bg=PANEL)
-        program_wrap.grid(row=0, column=2, padx=(5, 12), pady=5)
-        RoundedButton(
-            program_wrap, "Browse", self.browse_manual_program,
-            PURPLE, PURPLE_ACTIVE, width=88, height=30, radius=9,
-            font=("Segoe UI", 8, "bold")
-        ).pack()
 
-        plan_wrap = tk.Frame(exec_card, bg=PANEL)
-        plan_wrap.grid(row=1, column=0, padx=(12, 8), pady=5, sticky="w")
-        GreenCheck(plan_wrap, "Use Program Plan", self.use_program_plan).pack()
-
-        self.plan_display = ttk.Label(exec_card, text="program_plan.xlsx (derived)", style="Card.TLabel")
-        self.plan_display.grid(row=1, column=1, padx=5, pady=5, sticky="w")
-        preview_wrap = tk.Frame(exec_card, bg=PANEL)
-        preview_wrap.grid(row=1, column=2, padx=(5, 12), pady=4)
-        RoundedButton(
+        preview_wrap = tk.Frame(plan_wrap, bg=PANEL)
+        preview_wrap.pack(side="left")
+        self.previewbtn = RoundedButton(
             preview_wrap, "Preview", self.preview_program_plan,
-            SOFT, SOFT_ACTIVE, fg="#374151", width=88, height=30,
-            radius=9, font=("Segoe UI", 8, "bold")
-        ).pack()
-
-        options_wrap = tk.Frame(exec_card, bg=PANEL)
-        options_wrap.grid(row=2, column=1, columnspan=2, padx=5, pady=(2, 8), sticky="w")
-        GreenCheck(options_wrap, "Download WORK outputs", self.download_outputs).pack(side="left")
-        tk.Label(
-            options_wrap,
-            text="   Study synchronization is automatic for the selected Study Location.",
-            bg=PANEL, fg=MUTED, font=("Segoe UI", 8)
-        ).pack(side="left")
-
-        # ---------- Toolbar ----------
-        toolbar = tk.Frame(
-            self, bg=PANEL,
-            highlightbackground=BORDER, highlightthickness=1
+            "#0F766E", "#159287", width=68, height=25, radius=8,
+            font=("Segoe UI", 8, "bold")
         )
-        toolbar.pack(fill="x", padx=20, pady=(0, 8))
+        self.previewbtn.pack()
+        add_tooltip(self.previewbtn, "Preview the programs and execution order in sas/program_plan.xlsx.")
 
-        left = tk.Frame(toolbar, bg=PANEL)
-        left.pack(side="left", padx=10, pady=8)
+        action_wrap = tk.Frame(bottom_wrap, bg=PANEL)
+        action_wrap.pack(side="left", padx=(16, 0))
 
         self.runbtn = RoundedButton(
-            left, "▶  Run SAS", self.start_run,
-            BLUE, BLUE_ACTIVE, width=126, height=40,
-            radius=11, font=("Segoe UI", 10, "bold")
+            action_wrap, "▶  Run SAS", self.start_run,
+            "#2563EB", "#4A7DF2", width=108, height=31,
+            radius=9, font=("Segoe UI", 8, "bold")
         )
         self.runbtn.pack(side="left")
+        add_tooltip(self.runbtn, "Run the selected SAS program or the enabled program plan on SAS OnDemand.")
 
         self.restartbtn = RoundedButton(
-            left, "↻  Restart SAS", self.restart_sas,
-            AMBER, AMBER_ACTIVE, fg="#3F2D00",
-            width=126, height=36, radius=10
+            action_wrap, "↻  Restart SAS", self.restart_sas,
+            "#FF9933", "#FFBC80", fg="#222222",
+            width=108, height=31, radius=9, font=("Segoe UI", 8, "bold")
         )
-        self.restartbtn.pack(side="left", padx=(7, 0))
+        self.restartbtn.pack(side="left", padx=(6, 0))
+        add_tooltip(self.restartbtn, "End the current SAS session so the next run starts with a fresh SAS OnDemand session.")
+
+        right_wrap = tk.Frame(bottom_wrap, bg=PANEL)
+        right_wrap.pack(side="right")
+
+        self.download_check = GreenCheck(right_wrap, "Download WORK outputs", self.download_outputs)
+        self.download_check.pack(side="left", padx=(0, 12))
+        add_tooltip(
+            self.download_check,
+            "Download supported files created in remote SAS WORK in addition to permanent study outputs."
+        )
+
+        self.clearbtn = RoundedButton(
+            right_wrap, "Clear Window", self.clear_execution_window,
+            "#475569", "#64748B", fg="white", width=96, height=30,
+            radius=9, font=("Segoe UI", 8, "bold")
+        )
+        self.clearbtn.pack(side="left")
+        add_tooltip(self.clearbtn, "Clear the Run Information and Execution / Log Check display without ending SAS.")
 
         self.closebtn = RoundedButton(
-            left, "Close Studio", self.close_app,
-            RED, RED_ACTIVE, width=112, height=36, radius=10
+            right_wrap, "Terminate", self.close_app,
+            "#991B1B", "#B91C1C", width=96, height=30, radius=9,
+            font=("Segoe UI", 8, "bold")
         )
-        self.closebtn.pack(side="left", padx=(7, 0))
-
-        right = tk.Frame(toolbar, bg=PANEL)
-        right.pack(side="right", padx=10, pady=8)
-        RoundedButton(
-            right, "Clear Window", self.clear_execution_window,
-            SOFT, SOFT_ACTIVE, fg="#374151", width=104, height=32,
-            radius=9, font=("Segoe UI", 8, "bold")
-        ).pack(side="left")
+        self.closebtn.pack(side="left", padx=(6, 0))
+        add_tooltip(self.closebtn, "Terminate the SAS session and close SASPy Studio.")
 
         # ---------- Run information ----------
         info_card = ttk.LabelFrame(
             self, text="Run Information", style="Card.TLabelframe"
         )
-        info_card.pack(fill="x", padx=20, pady=(0, 8))
+        info_card.pack(fill="x", padx=20, pady=(0, 6))
 
         self.status_label = tk.Label(
             info_card, textvariable=self.status,
             bg=PANEL, fg=BLUE,
             font=("Segoe UI", 10, "bold")
         )
-        self.status_label.pack(anchor="w", padx=12, pady=(8, 2))
+        self.status_label.pack(anchor="w", padx=12, pady=(5, 1))
 
         tk.Label(
             info_card, textvariable=self.info,
             bg=PANEL, fg=MUTED, font=("Segoe UI", 9)
-        ).pack(anchor="w", padx=12, pady=(0, 2))
+        ).pack(anchor="w", padx=12, pady=(0, 1))
 
         tk.Label(
             info_card, textvariable=self.log_counts,
             bg=PANEL, fg=TEXT, font=("Segoe UI", 9, "bold")
-        ).pack(anchor="w", padx=12, pady=(0, 8))
+        ).pack(anchor="w", padx=12, pady=(0, 5))
 
         # ---------- Execution ----------
         output_card = ttk.LabelFrame(
             self, text="Execution / Log Check", style="Card.TLabelframe"
         )
         output_card.pack(
-            fill="both", expand=True, padx=20, pady=(0, 14)
+            fill="both", expand=True, padx=20, pady=(0, 12)
         )
 
         self.box = ScrolledText(
             output_card,
+            height=8,
             font=("Consolas", 9),
             bg="#FCFCFD", fg="#263238",
             relief="flat", bd=0
         )
-        self.box.pack(fill="both", expand=True, padx=8, pady=8)
+        self.box.pack(fill="both", expand=True, padx=8, pady=6)
         self.box.configure(state="disabled")
 
     def refresh_derived_paths(self):
         programs_text = self.programs_root.get().strip()
         study_text = self.study_root.get().strip()
         if programs_text:
-            programs = Path(programs_text).expanduser()
+            repository = Path(programs_text).expanduser()
+            programs = repository / "sas"
             self.autoexec_path.set(str(programs / "autoexec.sas"))
             self.study_macros_path.set(str(programs / "macros"))
             self.program_plan_path.set(str(programs / "program_plan.xlsx"))
@@ -571,7 +626,7 @@ class SASPyStudio(tk.Tk):
     def browse_manual_program(self):
         current = self.program_path.get().strip()
         programs = self.programs_root.get().strip()
-        initial = Path(programs) if programs else APP_DIR
+        initial = (Path(programs) / "sas") if programs else APP_DIR
         if current and Path(current).exists():
             initial = Path(current).parent
         filename = filedialog.askopenfilename(
@@ -740,7 +795,8 @@ class SASPyStudio(tk.Tk):
     def preview_program_plan(self):
         try:
             self.refresh_derived_paths()
-            programs_root = self._required_folder(self.programs_root.get(), "Programs location")
+            repository_root = self._required_folder(self.programs_root.get(), "Programs location")
+            programs_root = self._required_folder(str(repository_root / "sas"), "SAS programs folder")
             plan_path = self._required_file(str(programs_root / "program_plan.xlsx"), "Program plan")
             plan = self.read_program_plan(plan_path, programs_root)
             lines = ["PROGRAM PLAN", "-" * 68]
@@ -1133,7 +1189,8 @@ class SASPyStudio(tk.Tk):
         try:
             self.refresh_derived_paths()
             study_root = self._required_folder(self.study_root.get(), "Study location")
-            programs_root = self._required_folder(self.programs_root.get(), "Programs location")
+            repository_root = self._required_folder(self.programs_root.get(), "Programs location")
+            programs_root = self._required_folder(str(repository_root / "sas"), "SAS programs folder")
             autoexec = self._required_file(str(programs_root / "autoexec.sas"), "Autoexec")
             global_macros = self._required_folder(self.global_macros_path.get(), "Global macros")
             study_macros_path = programs_root / "macros"
