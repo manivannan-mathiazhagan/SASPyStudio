@@ -15,7 +15,7 @@
 ###                 2. Create and synchronize the remote study workspace.   ###
 ###                 3. Execute the study AUTOEXEC program.                  ###
 ###                 4. Assign RAW, SDTM and ADAM libraries.                 ###
-###                 5. Load optional global and automatic study macros.     ###
+###                 5. Load configured global and automatic study macros.   ###
 ###                 6. Execute the selected SAS program/program plan.       ###
 ###                 7. Display status and log checks in SAS Console.        ###
 ###                 8. Download generated SAS datasets and outputs.         ###
@@ -27,7 +27,7 @@
 ###                 Authentication files must not be committed to source    ###
 ###                 control.                                                ###
 ###-------------------------------------------------------------------------###
-### Notes:          Programs Location points to the repository root.        ###
+### Notes:          Programs Repository points to the repository root.      ###
 ###                 SASPy Studio automatically uses the /sas subfolder for  ###
 ###                 AUTOEXEC, macros, program_plan.xlsx and SAS programs.   ###
 ###                                                                         ###
@@ -60,15 +60,6 @@ from openpyxl import load_workbook
 APP_DIR = Path(__file__).resolve().parent
 CONFIG_FILE = APP_DIR / "sas_config.json"
 RUNTIME_CFG_FILE = APP_DIR / ".saspy_runtime_cfg.py"
-
-DEFAULT_AUTOEXEC = APP_DIR / "autoexec.sas"
-DEFAULT_GLOBAL_MACROS = APP_DIR / "macros"
-DEFAULT_STUDY_MACROS = ""
-DEFAULT_LOG_DIR = APP_DIR / "logs"
-DEFAULT_RESULT_DIR = APP_DIR / "results"
-DEFAULT_OUTPUT_DIR = APP_DIR / "output"
-
-
 
 def preferred_ui_font():
     return "Times New Roman"
@@ -212,14 +203,12 @@ class DatasetViewer(tk.Toplevel):
 
         self.study_location = str(study_location or "").strip()
         self.full_df = None
-        self.meta_df = None
         self.current_file = ""
         self.var_checks = {}
         self._sort_column = None
         self._sort_ascending = True
 
         self.card_bg = "#f7fbff"
-        self.viewer_bg = "#f3f7fd"
 
         self.library_var = tk.StringVar(value="SDTM")
         self.dataset_var = tk.StringVar()
@@ -238,13 +227,11 @@ class DatasetViewer(tk.Toplevel):
     def _build_ui(self):
         BG = "#f3f7fd"
         CARD = "#f7fbff"
-        TEXT = "#172033"
         MUTED = "#667085"
         BORDER = "#d8e6f3"
         BLUE = "#3b82f6"
         PURPLE = "#2563eb"
         TEAL = "#0F766E"
-        GREEN = "#16A34A"
         SLATE = "#9ca3af"
 
         VIEW_FONT = 12
@@ -661,6 +648,7 @@ class SASPyStudio(tk.Tk):
 
         self.ui_font = preferred_ui_font()
         self.mono_font = preferred_mono_font()
+        self.config = load_sas_config()
 
         self.title("SASPy Studio")
         self.geometry("1180x700")
@@ -669,9 +657,11 @@ class SASPyStudio(tk.Tk):
         # Project locations. The finalized repository/study structure is derived from these roots.
         self.study_root = tk.StringVar()
         self.programs_root = tk.StringVar()
-        self.global_macros_path = tk.StringVar(value="")
+        self.global_macros_path = tk.StringVar(
+            value=str(self.config.get("global_macros", ""))
+        )
         self.program_path = tk.StringVar()
-        self.program_queue = []
+
         self.use_program_plan = tk.BooleanVar(value=False)
         self.download_outputs = tk.BooleanVar(value=True)
 
@@ -682,15 +672,7 @@ class SASPyStudio(tk.Tk):
         self.log_dir = tk.StringVar()
         self.result_dir = tk.StringVar()
         self.output_dir = tk.StringVar()
-        self.use_autoexec = tk.BooleanVar(value=True)
-        self.use_global_macros = tk.BooleanVar(value=False)
-        self.use_study_macros = tk.BooleanVar(value=True)
-        self.sync_study = tk.BooleanVar(value=True)
-
         self.status = tk.StringVar(value="Ready")
-        self.info = tk.StringVar(
-            value="Fresh SAS session • XLSX program plans • validation • study synchronization"
-        )
         self.log_counts = tk.StringVar(
             value="Errors: 0   Warnings: 0   Important Notes: 0"
         )
@@ -717,16 +699,6 @@ class SASPyStudio(tk.Tk):
         MUTED = "#667085"
         BORDER = "#d8e6f3"
         BLUE = "#3b82f6"
-        BLUE_ACTIVE = "#5c9cff"
-        PURPLE = "#2563eb"
-        PURPLE_ACTIVE = "#4a7df2"
-        GREEN = "#16A34A"
-        AMBER = "#F59E0B"
-        AMBER_ACTIVE = "#D97706"
-        RED = "#DC2626"
-        RED_ACTIVE = "#B91C1C"
-        SOFT = "#e6f2fb"
-        SOFT_ACTIVE = "#d9ecff"
 
         self.configure(bg=BG)
 
@@ -818,14 +790,11 @@ class SASPyStudio(tk.Tk):
                 if kwargs or cnf:
                     return super().configure(cnf, **kwargs)
 
-            config = configure
-
         class GreenCheck(tk.Frame):
             """AnnotateCRF-style compact checkbox."""
 
             def __init__(self, parent, text, variable):
                 super().__init__(parent, bg="#f7fbff")
-                self.variable = variable
                 self.control = tk.Checkbutton(
                     self,
                     text=text,
@@ -901,8 +870,6 @@ class SASPyStudio(tk.Tk):
             for child in widget.winfo_children():
                 ToolTip(child, text)
 
-        self._RoundedButton = RoundedButton
-
         # AnnotateCRF-style rounded title band.
         header = tk.Canvas(
             self,
@@ -961,7 +928,7 @@ class SASPyStudio(tk.Tk):
         setup_card.columnconfigure(0, weight=0)
         setup_card.columnconfigure(2, weight=0)
 
-        def clickable_field(parent, variable, command, placeholder, icon="", optional=False):
+        def clickable_field(parent, variable, command, placeholder, optional=False):
             outer = tk.Frame(
                 parent,
                 bg="#ffffff",
@@ -1032,12 +999,12 @@ class SASPyStudio(tk.Tk):
             self.study_root,
             lambda: self.browse_folder(self.study_root),
             "Select the local study data/output root.",
-            "▣",
+
         )
         study_field.grid(row=0, column=1, padx=(0, 16), pady=(6, 4), sticky="ew")
 
         ttk.Label(
-            setup_card, text="Programs Location", style="Card.TLabel"
+            setup_card, text="Programs Repository", style="Card.TLabel"
         ).grid(row=0, column=2, padx=(0, 7), pady=(8, 4), sticky="w")
 
         programs_field = clickable_field(
@@ -1045,7 +1012,7 @@ class SASPyStudio(tk.Tk):
             self.programs_root,
             lambda: self.browse_folder(self.programs_root),
             "Select the repository root containing the sas folder.",
-            "▣",
+
         )
         programs_field.grid(row=0, column=3, padx=(0, 12), pady=(6, 4), sticky="ew")
 
@@ -1059,7 +1026,7 @@ class SASPyStudio(tk.Tk):
             self.program_path,
             self.browse_manual_program,
             "Select one SAS program when Program Plan is not used.",
-            "▤",
+
         )
         program_field.grid(row=1, column=1, padx=(0, 16), pady=4, sticky="ew")
 
@@ -1071,8 +1038,7 @@ class SASPyStudio(tk.Tk):
             setup_card,
             self.global_macros_path,
             lambda: self.browse_folder(self.global_macros_path),
-            "Optional: add a folder of global SAS macros. Leave blank to skip.",
-            "＋",
+            "Optional: use the configured global SAS macro library. Select another folder if needed.",
             optional=True,
         )
         global_field.grid(row=1, column=3, padx=(0, 12), pady=4, sticky="ew")
@@ -1096,7 +1062,7 @@ class SASPyStudio(tk.Tk):
         self.plan_check.pack(side="left")
         add_tooltip(
             self.plan_check,
-            "Run programs from <Programs Location>/sas/program_plan.xlsx instead of the Program field."
+            "Run programs from <Programs Repository>/sas/program_plan.xlsx instead of the Program field."
         )
 
         self.plan_display = tk.Label(
@@ -1106,7 +1072,7 @@ class SASPyStudio(tk.Tk):
         self.plan_display.pack(side="left", padx=(8, 6))
         add_tooltip(
             self.plan_display,
-            "Program plan is automatically derived from <Programs Location>/sas/program_plan.xlsx."
+            "Program plan is automatically derived from <Programs Repository>/sas/program_plan.xlsx."
         )
 
         preview_wrap = tk.Frame(plan_wrap, bg=PANEL)
@@ -1222,14 +1188,6 @@ class SASPyStudio(tk.Tk):
 
         tk.Label(
             console_footer,
-            textvariable=self.status,
-            bg=PANEL,
-            fg=BLUE,
-            font=(UI_FONT, FONT_SMALL, "bold"),
-        ).pack(side="left")
-
-        tk.Label(
-            console_footer,
             textvariable=self.log_counts,
             bg=PANEL,
             fg=MUTED,
@@ -1290,75 +1248,6 @@ class SASPyStudio(tk.Tk):
         self.status.set("Ready")
         self.log_counts.set("Errors: 0   Warnings: 0   Important Notes: 0")
 
-    def add_programs(self):
-        files = filedialog.askopenfilenames(
-            title="Add SAS Programs",
-            initialdir=str(APP_DIR),
-            filetypes=[("SAS programs", "*.sas"), ("All files", "*.*")],
-        )
-        for filename in files:
-            path = str(Path(filename).resolve())
-            if path not in self.program_queue:
-                self.program_queue.append(path)
-                self.queue_list.insert("end", path)
-
-    def remove_programs(self):
-        selected = list(self.queue_list.curselection())
-        for index in reversed(selected):
-            del self.program_queue[index]
-            self.queue_list.delete(index)
-
-    def clear_program_queue(self):
-        self.program_queue.clear()
-        self.queue_list.delete(0, "end")
-
-    def move_program(self, direction):
-        selected = list(self.queue_list.curselection())
-        if len(selected) != 1:
-            messagebox.showinfo(
-                "Program Order",
-                "Select one program at a time to move it up or down."
-            )
-            return
-        index = selected[0]
-        new_index = index + direction
-        if new_index < 0 or new_index >= len(self.program_queue):
-            return
-        self.program_queue[index], self.program_queue[new_index] = (
-            self.program_queue[new_index], self.program_queue[index]
-        )
-        self.queue_list.delete(0, "end")
-        for item in self.program_queue:
-            self.queue_list.insert("end", item)
-        self.queue_list.selection_set(new_index)
-        self.queue_list.see(new_index)
-
-    def browse_sas_file(self, variable):
-        current = variable.get().strip()
-        initial = APP_DIR
-        if current:
-            p = Path(current)
-            initial = p.parent if p.suffix else p
-
-        filename = filedialog.askopenfilename(
-            title="Select SAS Program",
-            initialdir=str(initial) if Path(initial).exists() else str(APP_DIR),
-            filetypes=[("SAS programs", "*.sas"), ("All files", "*.*")],
-        )
-        if filename:
-            variable.set(filename)
-
-    def browse_program_plan(self):
-        current = self.program_plan_path.get().strip()
-        initial = Path(current).parent if current else APP_DIR
-        filename = filedialog.askopenfilename(
-            title="Select Program Plan",
-            initialdir=str(initial) if Path(initial).exists() else str(APP_DIR),
-            filetypes=[("Excel workbooks", "*.xlsx"), ("All files", "*.*")],
-        )
-        if filename:
-            self.program_plan_path.set(filename)
-
     @staticmethod
     def _yes(value):
         return str(value or "").strip().upper() in {"Y", "YES", "TRUE", "1", "X"}
@@ -1367,7 +1256,7 @@ class SASPyStudio(tk.Tk):
     def _plan_type(value):
         text = str(value or "").strip().upper()
         aliases = {
-            "ADAM": "adam", "ADaM": "adam", "SDTM": "sdtm",
+            "ADAM": "adam",  "SDTM": "sdtm",
             "TABLE": "tables", "TABLES": "tables",
             "LISTING": "listings", "LISTINGS": "listings",
             "FIGURE": "figures", "FIGURES": "figures",
@@ -1441,7 +1330,7 @@ class SASPyStudio(tk.Tk):
     def preview_program_plan(self):
         try:
             self.refresh_derived_paths()
-            repository_root = self._required_folder(self.programs_root.get(), "Programs location")
+            repository_root = self._required_folder(self.programs_root.get(), "Programs Repository")
             programs_root = self._required_folder(str(repository_root / "sas"), "SAS programs folder")
             plan_path = self._required_file(str(programs_root / "program_plan.xlsx"), "Program plan")
             plan = self.read_program_plan(plan_path, programs_root)
@@ -1490,27 +1379,10 @@ class SASPyStudio(tk.Tk):
 
     def cleanup_runtime_config(self):
         """Remove the temporary SASPy runtime configuration file."""
-        candidates = {Path(__file__).resolve().parent / ".saspy_runtime_cfg.py"}
-
-        for attr in (
-            "runtime_cfg_path",
-            "runtime_config_path",
-            "saspy_runtime_cfg",
-            "sas_config_path",
-        ):
-            value = getattr(self, attr, None)
-            if value:
-                try:
-                    candidates.add(Path(value))
-                except TypeError:
-                    pass
-
-        for path in candidates:
-            try:
-                if path.name.lower() == ".saspy_runtime_cfg.py" and path.exists():
-                    path.unlink()
-            except OSError:
-                pass
+        try:
+            RUNTIME_CFG_FILE.unlink(missing_ok=True)
+        except OSError:
+            pass
 
     def close_app(self):
         if self.running:
@@ -1964,10 +1836,15 @@ class SASPyStudio(tk.Tk):
         try:
             self.refresh_derived_paths()
             study_root = self._required_folder(self.study_root.get(), "Study location")
-            repository_root = self._required_folder(self.programs_root.get(), "Programs location")
+            repository_root = self._required_folder(self.programs_root.get(), "Programs Repository")
             programs_root = self._required_folder(str(repository_root / "sas"), "SAS programs folder")
             autoexec = self._required_file(str(programs_root / "autoexec.sas"), "Autoexec")
-            global_macros = Path(self.global_macros_path.get().strip()).expanduser() if self.global_macros_path.get().strip() else None
+            global_macros_text = self.global_macros_path.get().strip()
+            global_macros = (
+                Path(global_macros_text).expanduser().resolve()
+                if global_macros_text
+                else None
+            )
             study_macros_path = programs_root / "macros"
             study_macros = study_macros_path.resolve() if study_macros_path.is_dir() else None
 
@@ -2005,16 +1882,10 @@ class SASPyStudio(tk.Tk):
 
             settings = {
                 "program": program,
-                "programs": programs,
                 "plan_items": plan_items,
                 "use_program_plan": self.use_program_plan.get(),
-                "use_autoexec": True,
-                "use_global_macros": global_macros is not None and global_macros.is_dir(),
-                "use_study_macros": study_macros is not None,
                 "download_outputs": self.download_outputs.get(),
-                "sync_study": True,
                 "study_root": study_root,
-                "programs_root": programs_root,
                 "autoexec": autoexec,
                 "global_macros": global_macros,
                 "study_macros": study_macros,
@@ -2048,7 +1919,7 @@ class SASPyStudio(tk.Tk):
         program = settings["program"]
         run_id = time.strftime("%Y%m%d_%H%M%S")
 
-        run_name = "program_plan" if settings["use_program_plan"] else (program.stem if len(settings["programs"]) == 1 else "batch_run")
+        run_name = "program_plan" if settings["use_program_plan"] else program.stem
         log_file = (
             settings["log_dir"] /
             f"{run_name}_{run_id}.log"
@@ -2063,7 +1934,7 @@ class SASPyStudio(tk.Tk):
             self.set_status("Connecting to SAS OnDemand...")
             self.write_box("Connecting to SAS OnDemand...")
 
-            cfg = load_sas_config()
+            cfg = self.config
             cfgname = build_runtime_config(cfg)
             authinfo_path = resolve_authinfo_path(cfg)
 
@@ -2098,33 +1969,31 @@ class SASPyStudio(tk.Tk):
             )
 
             remote_study_root = ""
-            if settings["sync_study"]:
-                self.set_status("Preparing remote study workspace...")
-                remote_work_for_study = self.get_work_path(sas)
-                if "%sysfunc" in remote_work_for_study.lower():
-                    raise RuntimeError(
-                        "SAS WORK path was not resolved: " + remote_work_for_study
-                    )
-                self.write_box(f"Remote SAS WORK: {remote_work_for_study}")
-                remote_study_root, uploaded_count = self.prepare_remote_study(
-                    sas, settings["study_root"], remote_work_for_study
+            self.set_status("Preparing remote study workspace...")
+            remote_work_for_study = self.get_work_path(sas)
+            if "%sysfunc" in remote_work_for_study.lower():
+                raise RuntimeError(
+                    "SAS WORK path was not resolved: " + remote_work_for_study
                 )
-                self.write_box(
-                    f"Study sync: {uploaded_count} local file(s) uploaded."
-                )
-                self.write_box(
-                    f"Remote study root: {remote_study_root}"
-                )
+            self.write_box(f"Remote SAS WORK: {remote_work_for_study}")
+            remote_study_root, uploaded_count = self.prepare_remote_study(
+                sas, settings["study_root"], remote_work_for_study
+            )
+            self.write_box(
+                f"Study sync: {uploaded_count} local file(s) uploaded."
+            )
+            self.write_box(
+                f"Remote study root: {remote_study_root}"
+            )
 
             # Build initialization list in a deterministic order.
             init_files = []
 
-            if settings["use_autoexec"]:
-                init_files.append(
-                    ("AUTOEXEC", settings["autoexec"])
-                )
+            init_files.append(
+                ("AUTOEXEC", settings["autoexec"])
+            )
 
-            if settings["use_global_macros"] and settings["global_macros"] is not None:
+            if settings["global_macros"] is not None and settings["global_macros"].is_dir():
                 global_files = sorted(
                     settings["global_macros"].glob("*.sas"),
                     key=lambda p: p.name.lower()
@@ -2132,7 +2001,7 @@ class SASPyStudio(tk.Tk):
                 for sas_file in global_files:
                     init_files.append(("GLOBAL", sas_file))
 
-            if settings["use_study_macros"]:
+            if settings["study_macros"] is not None:
                 study_files = sorted(
                     settings["study_macros"].glob("*.sas"),
                     key=lambda p: p.name.lower()
@@ -2145,16 +2014,15 @@ class SASPyStudio(tk.Tk):
             self.write_box("")
             self.write_box("Initialization plan:")
             self.write_box(
-                f"  Autoexec: "
-                f"{settings['autoexec'] if settings['use_autoexec'] else 'Skipped'}"
+                f"  Autoexec: {settings['autoexec']}"
             )
             self.write_box(
                 f"  Global macros: "
-                f"{settings['global_macros'] if settings['use_global_macros'] else 'Skipped'}"
+                f"{settings['global_macros'] if settings['global_macros'] is not None and settings['global_macros'].is_dir() else 'Not available'}"
             )
             self.write_box(
                 f"  Study macros: "
-                f"{settings['study_macros'] if settings['use_study_macros'] else 'Skipped'}"
+                f"{settings['study_macros'] if settings['study_macros'] is not None else 'Not available'}"
             )
             self.write_box(f"  Program: {program}")
             self.write_box("")
@@ -2174,10 +2042,9 @@ class SASPyStudio(tk.Tk):
                 source = sas_file.read_text(
                     encoding="utf-8", errors="replace"
                 )
-                if settings["sync_study"]:
-                    source = self.rewrite_study_paths(
-                        source, settings["study_root"], remote_study_root
-                    )
+                source = self.rewrite_study_paths(
+                    source, settings["study_root"], remote_study_root
+                )
 
                 t1 = time.perf_counter()
                 result = sas.submit(source)
@@ -2196,7 +2063,7 @@ class SASPyStudio(tk.Tk):
                 # structure. On SAS OnDemand, explicitly override the derived
                 # study paths and permanent librefs after autoexec executes.
                 # This is more reliable than relying only on text rewriting.
-                if group == "AUTOEXEC" and settings["sync_study"]:
+                if group == "AUTOEXEC":
                     bridge_log = self.assign_remote_libraries(sas, remote_study_root)
                     all_log_parts.append(
                         "\n/* ===== SASPYSTUDIO: REMOTE LIBRARY ASSIGNMENT ===== */\n"
@@ -2218,11 +2085,9 @@ class SASPyStudio(tk.Tk):
             # program(s) execute. This lets us detect only members changed by
             # this run, including overwritten existing datasets.
             permanent_before = {}
-            if settings["sync_study"]:
-                self.set_status("Snapshotting permanent datasets...")
-                permanent_before = self.snapshot_remote_sas_datasets(sas)
+            self.set_status("Snapshotting permanent datasets...")
+            permanent_before = self.snapshot_remote_sas_datasets(sas)
 
-            programs = settings["programs"]
             execution_items = settings["plan_items"]
             final_lst_parts = []
             program_elapsed = 0.0
@@ -2241,8 +2106,7 @@ class SASPyStudio(tk.Tk):
                     item_work_before = self.list_remote_files(sas, remote_work)
 
                 source = current_program.read_text(encoding="utf-8", errors="replace")
-                if settings["sync_study"]:
-                    source = self.rewrite_study_paths(source, settings["study_root"], remote_study_root)
+                source = self.rewrite_study_paths(source, settings["study_root"], remote_study_root)
 
                 t2 = time.perf_counter()
                 result = sas.submit(source)
@@ -2328,42 +2192,41 @@ class SASPyStudio(tk.Tk):
 
             study_downloaded = []
             changed_datasets = []
-            if settings["sync_study"]:
-                self.set_status("Checking changed permanent datasets...")
-                permanent_after = self.snapshot_remote_sas_datasets(sas)
-                changed_datasets = self.changed_remote_sas_datasets(
-                    permanent_before,
-                    permanent_after,
-                )
+            self.set_status("Checking changed permanent datasets...")
+            permanent_after = self.snapshot_remote_sas_datasets(sas)
+            changed_datasets = self.changed_remote_sas_datasets(
+                permanent_before,
+                permanent_after,
+            )
 
-                if changed_datasets:
-                    changed_text = ", ".join(
-                        f"{lib}.{mem}" for lib, mem in changed_datasets
-                    )
+            if changed_datasets:
+                changed_text = ", ".join(
+                    f"{lib}.{mem}" for lib, mem in changed_datasets
+                )
+                self.write_box(
+                    f"Changed permanent datasets: {changed_text}"
+                )
+                self.set_status("Refreshing changed datasets locally...")
+                study_downloaded = self.sync_remote_study_back(
+                    sas,
+                    settings["study_root"],
+                    remote_study_root,
+                    changed_datasets=changed_datasets,
+                )
+                self.write_box(
+                    f"Study sync: {len(study_downloaded)} changed "
+                    f"dataset(s) refreshed locally."
+                )
+                if study_downloaded:
                     self.write_box(
-                        f"Changed permanent datasets: {changed_text}"
+                        "Refreshed: "
+                        + ", ".join(p.name for p in study_downloaded)
                     )
-                    self.set_status("Refreshing changed datasets locally...")
-                    study_downloaded = self.sync_remote_study_back(
-                        sas,
-                        settings["study_root"],
-                        remote_study_root,
-                        changed_datasets=changed_datasets,
-                    )
-                    self.write_box(
-                        f"Study sync: {len(study_downloaded)} changed "
-                        f"dataset(s) refreshed locally."
-                    )
-                    if study_downloaded:
-                        self.write_box(
-                            "Refreshed: "
-                            + ", ".join(p.name for p in study_downloaded)
-                        )
-                else:
-                    self.write_box(
-                        "Study sync: No permanent SAS datasets changed; "
-                        "nothing to refresh locally."
-                    )
+            else:
+                self.write_box(
+                    "Study sync: No permanent SAS datasets changed; "
+                    "nothing to refresh locally."
+                )
 
             downloaded = []
             if settings["download_outputs"] and not settings["use_program_plan"]:

@@ -6,5 +6,6 @@
     "iom_port": 8591,
     "authkey": "oda",
     "authinfo": "_authinfo",
-    "encoding": "utf-8"
+    "encoding": "utf-8",
+    "global_macros": "D:\\Work\\MyGithub\\systems-nexus\\SASGlobalMacros"
 }

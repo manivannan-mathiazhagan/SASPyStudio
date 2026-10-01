@@ -1,66 +1,116 @@
 # SASPy Studio
 
-**SASPy Studio** is a lightweight desktop application for running local SAS programs against **SAS OnDemand for Academics** using Python and SASPy.
+**SASPy Studio** is a lightweight desktop application for running local
+SAS programs against **SAS OnDemand for Academics** using Python and
+SASPy.
 
-It provides a simple development workflow for SAS programmers who want to work with local `.sas` files, reusable SAS macros, Git/version control, and VS Code while using a remote SAS session for execution.
+It provides a study-oriented development workflow for SAS programmers
+who want to maintain SAS programs locally, use Git/version control and
+VS Code, organize study code separately from study data, and use a
+remote SAS OnDemand session for execution.
 
 ## Features
 
-- Run local SAS programs through SASPy
-- Connect to SAS OnDemand for Academics
-- Start a fresh SAS session for each run
-- Execute a local `autoexec.sas` before the selected program
-- Automatically load reusable SAS macros from the `macros` folder
-- Display initialization and execution progress
-- Save SAS logs locally
-- Save returned HTML results locally
-- Check SAS logs for errors, warnings, and selected important notes
-- Download generated files from the remote SAS WORK directory
-- Support common output formats including CSV, TXT, RTF, PDF, XLS/XLSX, XML, JSON, ZIP, PNG/JPG/SVG, HTML, LST, and XPT
-- Keep SAS OnDemand credentials outside source control
-- Work naturally with Git and VS Code
+-   Run local SAS programs through SASPy and SAS OnDemand for Academics
+-   Start a fresh SAS session for each run
+-   Separate the SASPy Studio application, study code repository, study
+    data, and reusable global macros
+-   Select a **Study Location**, **Programs Repository**, and SAS
+    **Program**
+-   Automatically derive the SAS programming root from
+    `<Programs Repository>/sas`
+-   Automatically execute `<Programs Repository>/sas/autoexec.sas`
+-   Automatically load study macros from
+    `<Programs Repository>/sas/macros`
+-   Optionally load reusable global macros from a configurable external
+    repository
+-   Support a study `program_plan.xlsx`
+-   Synchronize required local study inputs to a remote SAS workspace
+-   Assign and work with RAW, SDTM, and ADAM libraries
+-   Display initialization and execution progress in the SAS Console
+-   Check SAS logs for errors, warnings, and selected important notes
+-   Download changed permanent SAS datasets back to the local study
+    location
+-   Download supported output files generated during execution
+-   Include a Dataset Viewer for reviewing SAS datasets
+-   Keep SAS OnDemand credentials outside source control
+-   Work naturally with Git and VS Code
 
-## Project Structure
+## Recommended Project Architecture
 
-```text
-SASPyStudio/
-├── SASPyStudio.py
-├── sas_config.json
-├── _authinfo                 # Private - do not commit
-├── _authinfo_example
-├── autoexec.sas
-├── requirements.txt
-├── README.md
-├── .gitignore
-├── macros/
-├── TestPrograms/
-├── logs/
-├── results/
-└── output/
+SASPy Studio is designed so that the application itself does not contain
+study-specific programs or reusable macro libraries.
+
+Example:
+
+``` text
+D:\Work\
+├── MyGithub\
+│   ├── SASPyStudio\
+│   │   ├── SASPyStudio.py
+│   │   ├── sas_config.json
+│   │   ├── _authinfo
+│   │   ├── _authinfo_example
+│   │   ├── requirements.txt
+│   │   ├── README.md
+│   │   └── LICENSE
+│   │
+│   ├── SASGlobalMacros\
+│   │   └── <reusable SAS macro files>
+│   │
+│   └── TRN001-Code\
+│       └── sas\
+│           ├── autoexec.sas
+│           ├── program_plan.xlsx
+│           ├── setup\
+│           ├── macros\
+│           ├── sdtm\
+│           ├── adam\
+│           └── tlf\
+│
+└── Projects\
+    └── TRN001\
+        └── <study data, datasets, logs, results, and outputs>
 ```
 
-The `logs`, `results`, and `output` directories contain runtime-generated files and are excluded from source control.
+This separates:
+
+-   **SASPyStudio** --- application and execution engine
+-   **SASGlobalMacros** --- reusable SAS macros
+-   **Study code repository** --- study-specific SAS programs, autoexec,
+    macros, and program plan
+-   **Study Location** --- study data and generated runtime content
 
 ## Requirements
 
-- Python 3
-- SASPy
-- Java compatible with the SASPy IOM connection
-- A SAS OnDemand for Academics account
+-   Python 3
+-   SASPy
+-   pandas
+-   openpyxl
+-   Java compatible with the SASPy IOM connection
+-   A SAS OnDemand for Academics account
 
 Install the Python dependencies with:
 
-```powershell
+``` powershell
 pip install -r requirements.txt
+```
+
+Current `requirements.txt`:
+
+``` text
+saspy>=5.100
+pandas>=2.0
+openpyxl>=3.1
 ```
 
 ## Configuration
 
-Connection settings are stored in `sas_config.json`.
+Connection and application defaults are stored in `sas_config.json`.
 
 Example:
 
-```json
+``` json
 {
     "config_name": "oda",
     "region": "AP1",
@@ -69,19 +119,26 @@ Example:
     "iom_port": 8591,
     "authkey": "oda",
     "authinfo": "_authinfo",
-    "encoding": "utf-8"
+    "encoding": "utf-8",
+    "global_macros": "D:\\Work\\MyGithub\\systems-nexus\\SASGlobalMacros"
 }
 ```
 
-The example above reflects an Asia Pacific SAS OnDemand configuration. Update the connection settings as required for your own environment.
+Update machine-specific paths and SAS OnDemand connection information as
+required for your environment.
+
+`global_macros` defines the default reusable global macro repository
+displayed by SASPy Studio. The Global Macros location is optional and
+can also be changed from the application.
 
 ## Authentication
 
-SAS credentials must **not** be stored in the Python source code or committed to Git.
+SAS credentials must **not** be stored in the Python source code or
+committed to Git.
 
 Create a local file named:
 
-```text
+``` text
 _authinfo
 ```
 
@@ -89,164 +146,259 @@ beside `SASPyStudio.py`.
 
 Use `_authinfo_example` as the template:
 
-```text
+``` text
 oda user YOUR_SAS_ONDEMAND_USER_ID password YOUR_SAS_ONDEMAND_PASSWORD
 ```
 
 Replace the placeholders with your own SAS OnDemand credentials.
 
-The real `_authinfo` file is intentionally excluded through `.gitignore`. Never commit or share it.
+The real `_authinfo` file is excluded through `.gitignore`. Never commit
+or share it.
 
 ## Running SASPy Studio
 
 From PowerShell:
 
-```powershell
+``` powershell
 python SASPyStudio.py
 ```
 
-You can also open the project directory in VS Code and run `SASPyStudio.py`.
+You can also open the SASPyStudio repository in VS Code and run
+`SASPyStudio.py`.
 
-In SASPy Studio:
+### Main Inputs
 
-1. Select a `.sas` program using **Browse**.
-2. Choose whether to run `autoexec.sas`.
-3. Choose whether to load the `macros` folder.
-4. Choose whether to download generated WORK outputs.
-5. Select **Run SAS**.
+In SASPy Studio, select:
+
+1.  **Study Location** --- local study data/work area.
+2.  **Programs Repository** --- Git repository containing the study SAS
+    code.
+3.  **Program** --- SAS program to execute.
+4.  **Global Macros (Optional)** --- reusable macro repository, if
+    required.
+5.  **Use Program Plan** --- use the study `program_plan.xlsx` workflow
+    when applicable.
+
+The Programs Repository is expected to contain:
+
+``` text
+<Programs Repository>\
+└── sas\
+    ├── autoexec.sas
+    ├── program_plan.xlsx
+    ├── macros\
+    ├── setup\
+    ├── sdtm\
+    ├── adam\
+    └── tlf\
+```
+
+`autoexec.sas` is part of the study repository and is executed
+automatically. It is not stored in the SASPyStudio application
+repository.
 
 ## Execution Model
 
-For each run, SASPy Studio:
+For a normal run, SASPy Studio:
 
-1. Starts a fresh SAS OnDemand session.
-2. Submits `autoexec.sas`, if enabled.
-3. Submits each `macros/*.sas` file separately, if enabled.
-4. Executes the selected SAS program.
-5. Checks the combined SAS log.
-6. Downloads supported files generated in SAS WORK, if enabled.
-7. Saves local log/results.
-8. Ends the SAS session.
+1.  Connects to SAS OnDemand for Academics.
+2.  Resolves the remote SAS WORK location.
+3.  Creates a temporary remote `SASPyStudio_Study` workspace.
+4.  Synchronizes required local study inputs to the remote workspace.
+5.  Executes the study `autoexec.sas`.
+6.  Assigns the study RAW, SDTM, and ADAM libraries.
+7.  Loads configured global macros when available.
+8.  Loads study macros from the study repository.
+9.  Executes the selected SAS program or program-plan workflow.
+10. Identifies changed permanent SAS datasets.
+11. Downloads changed datasets and generated outputs to the local study
+    area.
+12. Completes synchronization and ends the SAS session.
 
-Submitting initialization files individually keeps the execution model simple while providing visible initialization progress.
+A fresh SAS session is used for each normal run.
+
+## Study Autoexec
+
+The study autoexec is expected at:
+
+``` text
+<Programs Repository>\sas\autoexec.sas
+```
+
+SASPy Studio uses the study repository selected in the GUI to locate
+this file automatically.
+
+This keeps environment setup and study-specific library/configuration
+logic with the study code rather than with the SASPyStudio application.
+
+## SAS Macros
+
+### Global Macros
+
+Reusable macros can be maintained in a separate Git repository, for
+example:
+
+``` text
+D:\Work\MyGithub\systems-nexus\SASGlobalMacros
+```
+
+The default location can be specified using `global_macros` in
+`sas_config.json`.
+
+Global macros are optional.
+
+### Study Macros
+
+Study-specific macros are maintained under:
+
+``` text
+<Programs Repository>\sas\macros
+```
+
+SASPy Studio discovers this location from the Programs Repository. A
+separate study-macro path does not need to be maintained in the
+SASPyStudio repository.
+
+## Program Plan
+
+A study program plan can be maintained at:
+
+``` text
+<Programs Repository>\sas\program_plan.xlsx
+```
+
+When the **Use Program Plan** option is selected, SASPy Studio uses the
+study program plan to drive the applicable execution workflow.
+
+Keeping the plan with the study code allows it to be maintained and
+version controlled with the corresponding SAS programs.
+
+## Study Synchronization
+
+SAS OnDemand executes programs in a remote environment, while the source
+code and study files can remain on the local Windows computer.
+
+SASPy Studio bridges these environments by creating a temporary remote
+study workspace and synchronizing the required files.
+
+Windows paths used by local study programs are adapted for remote
+execution where required.
+
+## Permanent SAS Dataset Synchronization
+
+SASPy Studio tracks permanent datasets in the RAW, SDTM, and ADAM
+libraries.
+
+Before program execution, it records the existing dataset state. After
+execution, it compares dataset metadata such as modification time,
+observation count, and variable count.
+
+Only datasets identified as changed need to be downloaded back to the
+local study location. This reduces unnecessary data transfer compared
+with downloading every permanent SAS dataset after each run.
 
 ## Log Checking
 
-SASPy Studio checks the combined SAS log for:
+SASPy Studio checks the SAS log for:
 
-- `ERROR:`
-- `WARNING:`
-- Selected important `NOTE:` messages
+-   `ERROR:`
+-   `WARNING:`
+-   Selected important `NOTE:` messages
 
-Important notes currently include conditions such as:
+Important notes can include conditions such as:
 
-- Uninitialized variables
-- Invalid data
-- Missing values generated
-- Numeric-to-character conversions
-- Character-to-numeric conversions
-- Division by zero
-- Mathematical operation issues
-- Insufficient `W.D` format width
-- MERGE statements with repeated BY values
+-   Uninitialized variables
+-   Invalid data
+-   Missing values generated
+-   Numeric-to-character conversions
+-   Character-to-numeric conversions
+-   Division by zero
+-   Mathematical operation issues
+-   Insufficient `W.D` format width
+-   MERGE statements with repeated BY values
 
-A summary is displayed in the application, for example:
-
-```text
-Errors: 0   Warnings: 0   Important Notes: 0
-```
-
-The complete SAS log is still retained for review.
+The complete SAS execution log remains available for review.
 
 ## Output Files
 
-When **Download WORK outputs** is selected, supported files created in the remote SAS WORK directory are downloaded to:
+SASPy Studio can retrieve generated output files from the remote SAS
+environment.
 
-```text
-output/<run_timestamp>/
-```
+Supported output types include common formats such as:
 
-Supported extensions currently include:
-
-```text
+``` text
 .csv .txt .rtf .pdf .xlsx .xls .xml .json .zip
 .png .jpg .jpeg .svg .html .htm .lst .xpt
 ```
 
-SAS datasets (`.sas7bdat`) are not automatically downloaded by this feature.
+Runtime outputs belong with the selected study rather than inside the
+SASPyStudio application repository.
 
-## Logs and Results
+## Dataset Viewer
 
-SAS logs are stored under:
+SASPy Studio includes a Dataset Viewer for reviewing SAS datasets from
+the application.
 
-```text
-logs/
+The viewer is intended to make it easier to inspect datasets during
+development without changing the separation between application code,
+study programs, and study data.
+
+## Git and Version Control
+
+The recommended model is to version the different code components
+independently:
+
+``` text
+SASPyStudio     -> application source
+SASGlobalMacros -> reusable/global SAS macros
+TRN001-Code     -> study-specific SAS code
 ```
 
-HTML results returned by SASPy are stored under:
+Study data and generated runtime files should normally remain outside
+these source-code repositories.
 
-```text
-results/
-```
-
-Downloaded WORK output files are stored under:
-
-```text
-output/
-```
-
-These runtime files are excluded from Git.
-
-## SAS Macros
-
-Reusable SAS macros can be placed in:
-
-```text
-macros/
-```
-
-When **Load macros folder** is selected, each `.sas` file in this directory is loaded before the selected program runs.
-
-Keeping macros in individual files also makes them easier to maintain and version with Git.
-
-## Test Programs
-
-Example programs are provided under:
-
-```text
-TestPrograms/
-```
-
-They can be used to verify the SASPy connection, program execution, log collection, and output-download workflow.
+This structure allows SAS programmers to use Git and VS Code for
+development while SAS OnDemand provides the SAS execution environment.
 
 ## Security Check Before Committing
 
 Verify that the real authentication file is ignored:
 
-```powershell
+``` powershell
 git check-ignore -v _authinfo
 ```
 
 Verify that it is not tracked:
 
-```powershell
+``` powershell
 git ls-files | Select-String "authinfo"
 ```
 
 Only `_authinfo_example` should be tracked.
 
-Never add passwords, API keys, access tokens, or other credentials to the repository.
+Never add passwords, API keys, access tokens, or other credentials to
+the repository.
 
 ## Development Status
 
-SASPy Studio is an independently developed utility intended to simplify SAS programming workflows using SASPy and SAS OnDemand.
+SASPy Studio is an independently developed utility intended to simplify
+SAS programming workflows using Python, SASPy, Git, VS Code, and SAS
+OnDemand for Academics.
 
-Additional features and improvements may be added as the project evolves.
+Version 2.0 introduces the study-oriented repository architecture,
+external global macro configuration, automatic study autoexec and macro
+discovery, remote study synchronization, permanent dataset
+synchronization, program-plan support, and the updated desktop
+interface.
+
+Planned enhancements can extend the workflow for specification-driven
+programming, data import, transport files, and additional
+output-generation capabilities.
 
 ## Version
 
-**1.0.0 — September 2026**
+**2.0 --- 1 October 2026**
 
 ## License
 
-No license has currently been assigned to this project.
+See the `LICENSE` file included in this repository.

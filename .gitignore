@@ -3,7 +3,7 @@
 # ============================================================
 
 # ------------------------------------------------------------
-# PRIVATE / CREDENTIAL FILES
+# Private / credential files
 # ------------------------------------------------------------
 _authinfo
 _authinfo_old
@@ -17,14 +17,9 @@ _authinfo_old
 # ------------------------------------------------------------
 # Runtime output
 # ------------------------------------------------------------
-logs/*
-results/*
-output/*
-
-# Keep empty directories if .gitkeep files are used
-!logs/.gitkeep
-!results/.gitkeep
-!output/.gitkeep
+logs/
+results/
+output/
 
 # ------------------------------------------------------------
 # Python
@@ -53,19 +48,4 @@ Thumbs.db
 # ------------------------------------------------------------
 *.tmp
 *.bak
-*~_authinfo
-
-# Generated SASPy runtime configuration
-.saspy_runtime_cfg.py
-
-# SASPy Studio generated files
-logs/*
-results/*
-output/*
-!logs/.gitkeep
-!results/.gitkeep
-!output/.gitkeep
-
-# Python
-__pycache__/
-*.pyc
+*~
