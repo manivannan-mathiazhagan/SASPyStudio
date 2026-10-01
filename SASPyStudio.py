@@ -1,57 +1,51 @@
-"""
-*******************************************************************************
-*** Program Name:   SASPyStudio.py                                        ***
-***                                                                         ***
-*** Application:    SASPy Studio                                           ***
-*** Version:        1.0                                                    ***
-***                                                                         ***
-*** Purpose:        Provide a lightweight desktop interface for executing  ***
-***                 local SAS programs using SAS OnDemand for Academics    ***
-***                 through SASPy.                                         ***
-***-------------------------------------------------------------------------***
-*** Programmed By:  Manivannan Mathialagan                                 ***
-*** Created On:     30Sep2026                                              ***
-***-------------------------------------------------------------------------***
-*** Process:        1. Connect to SAS OnDemand.                             ***
-***                 2. Create and synchronize the remote study workspace.   ***
-***                 3. Execute the study AUTOEXEC program.                  ***
-***                 4. Assign RAW, SDTM and ADAM libraries.                 ***
-***                 5. Load global and study SAS macros.                    ***
-***                 6. Execute the selected SAS program/program plan.       ***
-***                 7. Check and save SAS logs and results.                 ***
-***                 8. Download generated SAS datasets and outputs.         ***
-***                 9. Synchronize outputs to the local study structure.    ***
-***                10. End the SAS session.                                 ***
-***-------------------------------------------------------------------------***
-*** Security:       SAS OnDemand credentials are read from the private     ***
-***                 _authinfo file configured in sas_config.json.           ***
-***                 Authentication files must not be committed to source    ***
-***                 control.                                                ***
-***-------------------------------------------------------------------------***
-*** Notes:          Programs Location points to the repository root.        ***
-***                 SASPy Studio automatically uses the /sas subfolder for  ***
-***                 AUTOEXEC, macros, program_plan.xlsx and SAS programs.   ***
-***                                                                         ***
-***                 Local SAS programs remain platform independent.         ***
-***                 Windows study paths are translated as required when     ***
-***                 programs are submitted to SAS OnDemand/Linux.           ***
-***-------------------------------------------------------------------------***
-*** Change History:                                                        ***
-***                                                                         ***
-*** Version   Date         Description                                      ***
-*** -------   -----------  ------------------------------------------------ ***
-*** 1.0       30Sep2026    Initial release of SASPy Studio with SASPy       ***
-***                        connectivity, study synchronization, library      ***
-***                        assignment, macro loading, program execution,     ***
-***                        log/result handling and output synchronization.   ***
-*******************************************************************************
-"""
+###-------------------------------------------------------------------------###
+### Program Name:   SASPyStudio.py                                          ###
+###                                                                         ###                                              
+### Application:    SASPy Studio                                            ###                                          
+### Version:        1.0                                                     ###
+###                                                                         ###
+### Purpose:        Provide a lightweight desktop interface for executing   ###
+###                 local SAS programs using SAS OnDemand for Academics     ###
+###                 through SASPy.                                          ###
+###-------------------------------------------------------------------------###
+### Programmed By:  Manivannan Mathialagan                                  ###
+### Created On:     30Sep2026                                               ###
+###-------------------------------------------------------------------------###
+### Process:        1. Connect to SAS OnDemand.                             ###
+###                 2. Create and synchronize the remote study workspace.   ###
+###                 3. Execute the study AUTOEXEC program.                  ###
+###                 4. Assign RAW, SDTM and ADAM libraries.                 ###
+###                 5. Load optional global and automatic study macros.     ###
+###                 6. Execute the selected SAS program/program plan.       ###
+###                 7. Display status and log checks in SAS Console.        ###
+###                 8. Download generated SAS datasets and outputs.         ###
+###                 9. Synchronize outputs to the local study structure.    ###
+###                10. End the SAS session.                                 ###
+###-------------------------------------------------------------------------###
+### Security:       SAS OnDemand credentials are read from the private      ###
+###                 _authinfo file configured in sas_config.json.           ###
+###                 Authentication files must not be committed to source    ###
+###                 control.                                                ###
+###-------------------------------------------------------------------------###
+### Notes:          Programs Location points to the repository root.        ###
+###                 SASPy Studio automatically uses the /sas subfolder for  ###
+###                 AUTOEXEC, macros, program_plan.xlsx and SAS programs.   ###
+###                                                                         ###
+###                 Local SAS programs remain platform independent.         ###
+###                 Windows study paths are translated as required when     ###
+###                 programs are submitted to SAS OnDemand/Linux.           ###
+###-------------------------------------------------------------------------###
+### Change History:                                                         ###
+### 1.0       30Sep2026    Initial release of SASPy Studio.                 ###
+###-------------------------------------------------------------------------###
 
 import json
 import os
 import threading
 import time
 from pathlib import Path
+import pandas as pd
+
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
@@ -71,6 +65,13 @@ DEFAULT_LOG_DIR = APP_DIR / "logs"
 DEFAULT_RESULT_DIR = APP_DIR / "results"
 DEFAULT_OUTPUT_DIR = APP_DIR / "output"
 
+
+
+def preferred_ui_font():
+    return "Times New Roman"
+
+def preferred_mono_font():
+    return "Consolas"
 
 def load_sas_config():
     if not CONFIG_FILE.exists():
@@ -95,7 +96,6 @@ def load_sas_config():
 
     return cfg
 
-
 def resolve_authinfo_path(cfg):
     authinfo_value = str(cfg["authinfo"]).strip()
     authinfo_path = Path(authinfo_value).expanduser()
@@ -112,7 +112,6 @@ def resolve_authinfo_path(cfg):
         )
 
     return authinfo_path
-
 
 def build_runtime_config(cfg):
     cfgname = str(cfg["config_name"])
@@ -193,18 +192,481 @@ def check_sas_log(log_text):
     return errors, warnings, notes
 
 
+
+class DatasetViewer(tk.Toplevel):
+    """Browse synchronized local RAW/SDTM/ADAM SAS7BDAT files."""
+
+    LIBRARIES = ("RAW", "SDTM", "ADAM")
+
+    def __init__(self, master, study_location):
+        super().__init__(master)
+        self.title("SASPy Studio - Dataset Viewer")
+        self.geometry("1180x680")
+        self.minsize(900, 520)
+        self.configure(bg="#EEF5FC")
+        self.ui_font = preferred_ui_font()
+        self.mono_font = preferred_mono_font()
+
+        self.study_location = str(study_location or "").strip()
+        self.full_df = None
+        self.meta_df = None
+        self.current_file = ""
+        self.var_checks = {}
+        self._sort_column = None
+        self._sort_ascending = True
+
+        self.card_bg = "#f7fbff"
+        self.viewer_bg = "#f3f7fd"
+
+        self.library_var = tk.StringVar(value="SDTM")
+        self.dataset_var = tk.StringVar()
+        self.filter_var = tk.StringVar()
+        self.row_limit_var = tk.StringVar(value="100")
+        self.status_var = tk.StringVar(value="Select a library and dataset.")
+        self.search_var = tk.StringVar()
+
+        self._build_ui()
+        self.refresh_datasets()
+
+    def _library_dir(self):
+        # Study Location is the study data/output root used by SASPy Studio.
+        return Path(self.study_location) / "data" / "sas" / self.library_var.get().lower()
+
+    def _build_ui(self):
+        BG = "#f3f7fd"
+        CARD = "#f7fbff"
+        TEXT = "#172033"
+        MUTED = "#667085"
+        BORDER = "#d8e6f3"
+        BLUE = "#3b82f6"
+        PURPLE = "#2563eb"
+        TEAL = "#0F766E"
+        GREEN = "#16A34A"
+        SLATE = "#9ca3af"
+
+        VIEW_FONT = 12
+        VIEW_FONT_BOLD = 12
+
+        style = ttk.Style(self)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+        style.configure(
+            "Viewer.Treeview",
+            background="#ffffff",
+            fieldbackground="#ffffff",
+            foreground="#172033",
+            rowheight=30,
+            font=(self.ui_font, VIEW_FONT),
+            borderwidth=1,
+            relief="solid",
+        )
+        style.configure(
+            "Viewer.Treeview.Heading",
+            background="#dceaf8",
+            foreground="#173a63",
+            font=(self.ui_font, VIEW_FONT_BOLD, "bold"),
+            relief="solid",
+            borderwidth=1,
+            padding=(6, 5),
+        )
+        style.map(
+            "Viewer.Treeview",
+            background=[("selected", "#d9ecff")],
+            foreground=[("selected", "#102a43")],
+        )
+        style.map(
+            "Viewer.Treeview.Heading",
+            background=[("active", "#cfe3f5")],
+        )
+
+        top = tk.Frame(self, bg=CARD, bd=1, relief="solid", highlightbackground=BORDER)
+        top.pack(fill="x", padx=12, pady=(12, 7))
+
+        tk.Label(top, text="Library", bg=CARD, font=(self.ui_font, VIEW_FONT_BOLD, "bold")).grid(
+            row=0, column=0, padx=(10, 5), pady=8, sticky="w"
+        )
+        lib = ttk.Combobox(
+            top, textvariable=self.library_var, values=self.LIBRARIES,
+            state="readonly", width=10
+        )
+        lib.grid(row=0, column=1, padx=(0, 12), pady=8)
+        lib.bind("<<ComboboxSelected>>", lambda _e: self.refresh_datasets())
+
+        tk.Label(top, text="Dataset", bg=CARD, font=(self.ui_font, VIEW_FONT_BOLD, "bold")).grid(
+            row=0, column=2, padx=(0, 5), pady=8
+        )
+        self.dataset_combo = ttk.Combobox(
+            top, textvariable=self.dataset_var, state="readonly", width=24
+        )
+        self.dataset_combo.grid(row=0, column=3, padx=(0, 8), pady=8)
+        self.dataset_combo.bind("<<ComboboxSelected>>", lambda _e: self.load_dataset())
+
+        tk.Button(top, text="Refresh", command=self.refresh_datasets, bg=PURPLE, fg="white", activebackground="#4a7df2", activeforeground="white", relief="flat", padx=10).grid(
+            row=0, column=4, padx=(0, 16), pady=8
+        )
+
+        tk.Label(top, text="Rows", bg=CARD, font=(self.ui_font, VIEW_FONT_BOLD, "bold")).grid(
+            row=0, column=5, padx=(0, 5), pady=8
+        )
+        rows = ttk.Combobox(
+            top, textvariable=self.row_limit_var,
+            values=("50", "100", "500", "1000", "All"),
+            state="readonly", width=7
+        )
+        rows.grid(row=0, column=6, padx=(0, 16), pady=8)
+        rows.bind("<<ComboboxSelected>>", lambda _e: self.apply_view())
+
+        tk.Label(top, text="Search", bg=CARD, font=(self.ui_font, VIEW_FONT_BOLD, "bold")).grid(
+            row=0, column=7, padx=(0, 5), pady=8
+        )
+        search = ttk.Entry(top, textvariable=self.search_var, width=24)
+        search.grid(row=0, column=8, padx=(0, 8), pady=8, sticky="ew")
+        search.bind("<Return>", lambda _e: self.apply_view())
+        tk.Button(top, text="Apply", command=self.apply_view, bg=BLUE, fg="white", activebackground="#5c9cff", activeforeground="white", relief="flat", padx=10).grid(
+            row=0, column=9, padx=(0, 10), pady=8
+        )
+        top.grid_columnconfigure(8, weight=1)
+
+        body = tk.PanedWindow(self, orient="horizontal", sashwidth=5, bg="#D6DEE8")
+        body.pack(fill="both", expand=True, padx=10, pady=(0, 6))
+
+        # Keep the Variables pane compact so the dataset grid receives
+        # most of the available width, including when the viewer is maximized.
+        left = tk.Frame(body, bg=CARD, width=250)
+        left.pack_propagate(False)
+        body.add(left, minsize=210, width=250, stretch="never")
+
+        # Tk can otherwise redistribute pane width during initial layout.
+        # Re-assert the preferred sash position once geometry is available.
+        self.after_idle(lambda: body.sash_place(0, 250, 0))
+
+        tk.Label(
+            left, text="Variables", bg=CARD,
+            font=(self.ui_font, VIEW_FONT_BOLD, "bold")
+        ).pack(anchor="w", padx=10, pady=(9, 3))
+
+        var_actions = tk.Frame(left, bg=CARD)
+        var_actions.pack(fill="x", padx=8, pady=(0, 4))
+        tk.Button(var_actions, text="All", width=7, command=self.select_all_vars).pack(side="left")
+        tk.Button(var_actions, text="None", width=7, command=self.clear_all_vars).pack(
+            side="left", padx=(5, 0)
+        )
+
+        canvas = tk.Canvas(left, bg=CARD, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(left, orient="vertical", command=canvas.yview)
+        self.var_frame = tk.Frame(canvas, bg=CARD)
+        self.var_frame.bind(
+            "<Configure>",
+            lambda _e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        canvas.create_window((0, 0), window=self.var_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", fill="both", expand=True, padx=(6, 0), pady=(0, 6))
+        scrollbar.pack(side="right", fill="y", pady=(0, 6))
+
+        right = tk.Frame(body, bg=CARD)
+        body.add(right, stretch="always")
+
+        filterbar = tk.Frame(right, bg=CARD)
+        filterbar.pack(fill="x", padx=8, pady=(8, 4))
+        tk.Label(
+            filterbar, text="Filter", bg=CARD,
+            font=(self.ui_font, VIEW_FONT_BOLD, "bold")
+        ).pack(side="left")
+        filter_entry = ttk.Entry(filterbar, textvariable=self.filter_var)
+        filter_entry.pack(side="left", fill="x", expand=True, padx=(6, 6))
+        filter_entry.bind("<Return>", lambda _e: self.apply_view())
+        tk.Button(filterbar, text="Apply Filter", command=self.apply_view, bg=TEAL, fg="white", activebackground="#0D9488", activeforeground="white", relief="flat", padx=10).pack(side="left")
+        tk.Button(filterbar, text="Clear", command=self.clear_filters, bg=SLATE, fg="white", activebackground="#b6bcc7", activeforeground="white", relief="flat", padx=10).pack(
+            side="left", padx=(5, 0)
+        )
+        tk.Button(filterbar, text="Metadata", command=self.show_metadata, bg=PURPLE, fg="white", activebackground="#4a7df2", activeforeground="white", relief="flat", padx=10).pack(
+            side="left", padx=(10, 0)
+        )
+
+        tree_frame = tk.Frame(right, bg=CARD)
+        tree_frame.pack(fill="both", expand=True, padx=8, pady=(0, 6))
+
+        self.tree = ttk.Treeview(tree_frame, show="headings", style="Viewer.Treeview")
+        self.tree.tag_configure("oddrow", background="#ffffff")
+        self.tree.tag_configure("evenrow", background="#f5f9fd")
+        yscroll = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
+        xscroll = ttk.Scrollbar(tree_frame, orient="horizontal", command=self.tree.xview)
+        self.tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        yscroll.grid(row=0, column=1, sticky="ns")
+        xscroll.grid(row=1, column=0, sticky="ew")
+        tree_frame.grid_rowconfigure(0, weight=1)
+        tree_frame.grid_columnconfigure(0, weight=1)
+
+        tk.Label(
+            self, textvariable=self.status_var, anchor="w",
+            bg=BG, fg=MUTED, font=(self.ui_font, VIEW_FONT)
+        ).pack(fill="x", padx=12, pady=(0, 8))
+
+    def refresh_datasets(self):
+        folder = self._library_dir()
+        datasets = []
+        try:
+            if folder.exists():
+                datasets = sorted(
+                    p.stem.upper()
+                    for p in folder.iterdir()
+                    if p.is_file() and p.suffix.lower() == ".sas7bdat"
+                )
+        except Exception as exc:
+            messagebox.showerror("Dataset Viewer", f"Unable to scan:\n{folder}\n\n{exc}", parent=self)
+
+        self.dataset_combo["values"] = datasets
+        if datasets:
+            if self.dataset_var.get() not in datasets:
+                self.dataset_var.set(datasets[0])
+            self.load_dataset()
+        else:
+            self.dataset_var.set("")
+            self.full_df = None
+            self._clear_tree()
+            self._build_variable_checks([])
+            self.status_var.set(f"No SAS7BDAT datasets found in {folder}")
+
+    def load_dataset(self):
+        name = self.dataset_var.get().strip()
+        if not name:
+            return
+        folder = self._library_dir()
+        path = folder / f"{name.lower()}.sas7bdat"
+        if not path.exists():
+            # Preserve actual case if the file was created with upper/mixed case.
+            matches = [p for p in folder.glob("*.sas7bdat") if p.stem.upper() == name.upper()]
+            if matches:
+                path = matches[0]
+        try:
+            df = pd.read_sas(path, format="sas7bdat", encoding="utf-8")
+            # Decode any remaining byte-valued cells safely.
+            for col in df.columns:
+                if df[col].dtype == object:
+                    df[col] = df[col].map(
+                        lambda x: x.decode("utf-8", errors="replace")
+                        if isinstance(x, (bytes, bytearray)) else x
+                    )
+            self.full_df = df
+            self.current_file = str(path)
+            self._build_variable_checks(list(df.columns))
+            self.filter_var.set("")
+            self.search_var.set("")
+            self._sort_column = None
+            self._sort_ascending = True
+            self.apply_view()
+        except ImportError:
+            messagebox.showerror(
+                "Dataset Viewer",
+                "Pandas SAS support is not available.\n\nInstall pandas and pyreadstat:\n"
+                "pip install pandas pyreadstat",
+                parent=self
+            )
+        except Exception as exc:
+            messagebox.showerror(
+                "Dataset Viewer",
+                f"Unable to read SAS dataset:\n{path}\n\n{exc}",
+                parent=self
+            )
+
+    def _build_variable_checks(self, columns):
+        for child in self.var_frame.winfo_children():
+            child.destroy()
+        self.var_checks = {}
+        for col in columns:
+            var = tk.BooleanVar(value=True)
+            cb = tk.Checkbutton(
+                self.var_frame, text=str(col), variable=var,
+                command=self.apply_view, bg=self.card_bg, anchor="w",
+                activebackground=self.card_bg
+            )
+            cb.pack(fill="x", anchor="w")
+            self.var_checks[str(col)] = var
+
+    def select_all_vars(self):
+        for var in self.var_checks.values():
+            var.set(True)
+        self.apply_view()
+
+    def clear_all_vars(self):
+        for var in self.var_checks.values():
+            var.set(False)
+        self.apply_view()
+
+    def clear_filters(self):
+        self.filter_var.set("")
+        self.search_var.set("")
+        self.apply_view()
+
+    def _selected_columns(self):
+        return [name for name, var in self.var_checks.items() if var.get()]
+
+    @staticmethod
+    def _format_value(value):
+        if pd.isna(value):
+            return ""
+        if hasattr(value, "strftime"):
+            try:
+                return value.strftime("%Y-%m-%d")
+            except Exception:
+                pass
+        if isinstance(value, float) and value.is_integer():
+            return str(int(value))
+        return str(value)
+
+    def _filtered_df(self):
+        if self.full_df is None:
+            return None
+
+        df = self.full_df
+        expression = self.filter_var.get().strip()
+        if expression:
+            try:
+                # Pandas query syntax supports useful expressions such as:
+                # AGE > 40, SEX == "F", SITEID == "101".
+                df = df.query(expression, engine="python")
+            except Exception as exc:
+                raise ValueError(
+                    "Invalid filter expression.\n\n"
+                    'Examples:\nAGE > 40\nSEX == "F"\nSITEID == 101\n\n'
+                    f"{exc}"
+                )
+
+        search = self.search_var.get().strip().lower()
+        if search:
+            mask = pd.Series(False, index=df.index)
+            for col in df.columns:
+                mask = mask | df[col].astype(str).str.lower().str.contains(
+                    search, na=False, regex=False
+                )
+            df = df[mask]
+
+        if self._sort_column and self._sort_column in df.columns:
+            try:
+                df = df.sort_values(
+                    self._sort_column,
+                    ascending=self._sort_ascending,
+                    na_position="last"
+                )
+            except Exception:
+                pass
+
+        return df
+
+    def apply_view(self):
+        if self.full_df is None:
+            return
+        try:
+            filtered = self._filtered_df()
+        except ValueError as exc:
+            messagebox.showwarning("Dataset Filter", str(exc), parent=self)
+            return
+
+        selected = self._selected_columns()
+        self._clear_tree()
+        if not selected:
+            self.status_var.set(
+                f"{len(filtered):,} of {len(self.full_df):,} observations | 0 variables selected"
+            )
+            return
+
+        shown = filtered[selected]
+        limit_text = self.row_limit_var.get()
+        if limit_text != "All":
+            try:
+                shown = shown.head(int(limit_text))
+            except Exception:
+                shown = shown.head(100)
+
+        self.tree["columns"] = selected
+        for col in selected:
+            heading = col
+            if self._sort_column == col:
+                heading += " ▲" if self._sort_ascending else " ▼"
+            self.tree.heading(col, text=heading, command=lambda c=col: self.sort_by(c))
+            width = max(85, min(220, max(len(str(col)) * 9, 100)))
+            self.tree.column(col, width=width, minwidth=60, stretch=True, anchor="w")
+
+        for row in shown.itertuples(index=False, name=None):
+            self.tree.insert("", "end", values=[self._format_value(v) for v in row])
+
+        self.status_var.set(
+            f"{self.library_var.get()}.{self.dataset_var.get()}  |  "
+            f"Showing {len(shown):,} of {len(filtered):,} filtered / {len(self.full_df):,} total observations  |  "
+            f"{len(selected)} of {len(self.full_df.columns)} variables  |  {self.current_file}"
+        )
+
+    def sort_by(self, column):
+        if self._sort_column == column:
+            self._sort_ascending = not self._sort_ascending
+        else:
+            self._sort_column = column
+            self._sort_ascending = True
+        self.apply_view()
+
+    def _clear_tree(self):
+        self.tree.delete(*self.tree.get_children())
+        self.tree["columns"] = ()
+
+    def show_metadata(self):
+        if self.full_df is None:
+            return
+
+        win = tk.Toplevel(self)
+        win.title(f"Metadata - {self.library_var.get()}.{self.dataset_var.get()}")
+        win.geometry("820x480")
+        win.configure(bg=self.card_bg)
+
+        columns = ("Order", "Variable", "Type", "Length", "Pandas Type")
+        tree = ttk.Treeview(win, columns=columns, show="headings")
+        for col in columns:
+            tree.heading(col, text=col)
+        tree.column("Order", width=60, anchor="center")
+        tree.column("Variable", width=160)
+        tree.column("Type", width=90)
+        tree.column("Length", width=90, anchor="center")
+        tree.column("Pandas Type", width=180)
+
+        yscroll = ttk.Scrollbar(win, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=yscroll.set)
+        tree.pack(side="left", fill="both", expand=True, padx=(10, 0), pady=10)
+        yscroll.pack(side="right", fill="y", padx=(0, 10), pady=10)
+
+        for idx, col in enumerate(self.full_df.columns, start=1):
+            series = self.full_df[col]
+            dtype = str(series.dtype)
+            if pd.api.types.is_numeric_dtype(series):
+                sas_type = "Numeric"
+                length = "8"
+            else:
+                sas_type = "Character"
+                try:
+                    length = str(int(series.dropna().astype(str).map(len).max() or 0))
+                except Exception:
+                    length = ""
+            tree.insert("", "end", values=(idx, col, sas_type, length, dtype))
+
+
+
 class SASPyStudio(tk.Tk):
     def __init__(self):
         super().__init__()
 
+        self.ui_font = preferred_ui_font()
+        self.mono_font = preferred_mono_font()
+
         self.title("SASPy Studio")
-        self.geometry("1180x650")
-        self.minsize(1050, 590)
+        self.geometry("1180x700")
+        self.minsize(980, 600)
 
         # Project locations. The finalized repository/study structure is derived from these roots.
         self.study_root = tk.StringVar()
         self.programs_root = tk.StringVar()
-        self.global_macros_path = tk.StringVar(value=str(DEFAULT_GLOBAL_MACROS))
+        self.global_macros_path = tk.StringVar(value="")
         self.program_path = tk.StringVar()
         self.program_queue = []
         self.use_program_plan = tk.BooleanVar(value=False)
@@ -218,7 +680,7 @@ class SASPyStudio(tk.Tk):
         self.result_dir = tk.StringVar()
         self.output_dir = tk.StringVar()
         self.use_autoexec = tk.BooleanVar(value=True)
-        self.use_global_macros = tk.BooleanVar(value=True)
+        self.use_global_macros = tk.BooleanVar(value=False)
         self.use_study_macros = tk.BooleanVar(value=True)
         self.sync_study = tk.BooleanVar(value=True)
 
@@ -234,22 +696,34 @@ class SASPyStudio(tk.Tk):
         self.build()
 
     def build(self):
-        BG = "#F4F5F7"
-        PANEL = "#FFFFFF"
+        UI_FONT = self.ui_font
+        MONO_FONT = self.mono_font
+
+        # Unified typography scale.
+        FONT_SECTION = 13
+        FONT_LABEL = 12
+        FONT_FIELD = 12
+        FONT_BUTTON = 12
+        FONT_OPTION = 12
+        FONT_SMALL = 11
+        FONT_CONSOLE = 11
+
+        BG = "#f3f7fd"
+        PANEL = "#f7fbff"
         TEXT = "#202124"
         MUTED = "#667085"
-        BORDER = "#D9DDE5"
-        BLUE = "#2563EB"
-        BLUE_ACTIVE = "#1D4ED8"
-        PURPLE = "#7C3AED"
-        PURPLE_ACTIVE = "#6D28D9"
+        BORDER = "#d8e6f3"
+        BLUE = "#3b82f6"
+        BLUE_ACTIVE = "#5c9cff"
+        PURPLE = "#2563eb"
+        PURPLE_ACTIVE = "#4a7df2"
         GREEN = "#16A34A"
         AMBER = "#F59E0B"
         AMBER_ACTIVE = "#D97706"
         RED = "#DC2626"
         RED_ACTIVE = "#B91C1C"
-        SOFT = "#EEF1F5"
-        SOFT_ACTIVE = "#E1E6EC"
+        SOFT = "#e6f2fb"
+        SOFT_ACTIVE = "#d9ecff"
 
         self.configure(bg=BG)
 
@@ -269,15 +743,18 @@ class SASPyStudio(tk.Tk):
             "Card.TLabelframe.Label",
             background=BG,
             foreground=TEXT,
-            font=("Segoe UI", 9, "bold"),
+            font=(UI_FONT, FONT_SECTION, "bold"),
         )
-        style.configure("Card.TLabel", background=PANEL, foreground=TEXT)
+        style.configure(
+            "Card.TLabel", background=PANEL, foreground=TEXT,
+            font=(UI_FONT, FONT_LABEL)
+        )
 
         class RoundedButton(tk.Canvas):
             def __init__(
                 self, parent, text, command, bg, active_bg,
-                fg="white", width=120, height=36, radius=10,
-                font=("Segoe UI", 9, "bold")
+                fg="white", width=150, height=46, radius=10,
+                font=(UI_FONT, FONT_BUTTON, "bold")
             ):
                 super().__init__(
                     parent, width=width, height=height,
@@ -334,50 +811,43 @@ class SASPyStudio(tk.Tk):
                 if state is not None:
                     self.enabled = str(state) not in ("disabled", "DISABLED")
                     super().configure(cursor="hand2" if self.enabled else "arrow")
-                    self.draw(self.normal_bg if self.enabled else "#B8C0CC")
+                    self.draw(self.normal_bg if self.enabled else "#d9d9d9")
                 if kwargs or cnf:
                     return super().configure(cnf, **kwargs)
 
             config = configure
 
         class GreenCheck(tk.Frame):
+            """AnnotateCRF-style compact checkbox."""
+
             def __init__(self, parent, text, variable):
-                super().__init__(parent, bg=PANEL)
+                super().__init__(parent, bg="#f7fbff")
                 self.variable = variable
-                self.box = tk.Canvas(
-                    self, width=20, height=20, bg=PANEL,
-                    highlightthickness=0, bd=0, cursor="hand2"
+                self.control = tk.Checkbutton(
+                    self,
+                    text=text,
+                    variable=variable,
+                    bg="#f7fbff",
+                    activebackground="#f7fbff",
+                    fg="#27496d",
+                    activeforeground="#27496d",
+                    selectcolor="#ffffff",
+                    font=(UI_FONT, FONT_OPTION),
+                    bd=0,
+                    relief="flat",
+                    highlightthickness=0,
+                    padx=2,
+                    pady=4,
+                    cursor="hand2",
                 )
-                self.box.pack(side="left")
-                self.label = tk.Label(
-                    self, text=text, bg=PANEL, fg=TEXT,
-                    font=("Segoe UI", 9), cursor="hand2"
-                )
-                self.label.pack(side="left", padx=(5, 0))
-                self.box.bind("<Button-1>", self.toggle)
-                self.label.bind("<Button-1>", self.toggle)
-                self.variable.trace_add("write", lambda *_: self.draw())
-                self.draw()
+                self.control.pack(side="left")
 
-            def toggle(self, _event=None):
-                self.variable.set(not self.variable.get())
-
-            def draw(self):
-                self.box.delete("all")
-                if self.variable.get():
-                    self.box.create_rectangle(
-                        2, 2, 18, 18, fill=GREEN, outline=GREEN, width=1
-                    )
-                    self.box.create_line(
-                        5, 10, 9, 14, 16, 6,
-                        fill="white", width=2.2,
-                        capstyle="round", joinstyle="round"
-                    )
-                else:
-                    self.box.create_rectangle(
-                        2, 2, 18, 18,
-                        fill="white", outline="#AAB2BF", width=1
-                    )
+            def configure(self, cnf=None, **kwargs):
+                state = kwargs.pop("state", None)
+                if state is not None:
+                    self.control.configure(state=state)
+                if cnf or kwargs:
+                    return super().configure(cnf, **kwargs)
 
         class ToolTip:
             def __init__(self, widget, text, delay=450):
@@ -413,7 +883,7 @@ class SASPyStudio(tk.Tk):
                 tk.Label(
                     self.tip, text=self.text, justify="left",
                     bg="#FFFBEA", fg="#1F2937", relief="solid", bd=1,
-                    font=("Segoe UI", 8), padx=7, pady=4
+                    font=(UI_FONT, FONT_SMALL), padx=7, pady=4
                 ).pack()
 
             def _hide(self, _event=None):
@@ -430,20 +900,50 @@ class SASPyStudio(tk.Tk):
 
         self._RoundedButton = RoundedButton
 
-        header = tk.Frame(self, bg=BG)
-        header.pack(fill="x", padx=20, pady=(14, 7))
+        # AnnotateCRF-style rounded title band.
+        header = tk.Canvas(
+            self,
+            height=54,
+            bg=BG,
+            highlightthickness=0,
+            bd=0,
+        )
+        header.pack(fill="x", padx=12, pady=(10, 8))
 
-        tk.Label(
-            header, text="SASPy Studio",
-            bg=BG, fg="#172554",
-            font=("Segoe UI", 20, "bold")
-        ).pack(side="left")
+        def draw_header_band(_event=None):
+            header.delete("all")
+            width = max(100, header.winfo_width())
+            x1, y1, x2, y2, r = 0, 1, width - 1, 52, 16
+            points = [
+                x1+r, y1, x2-r, y1, x2, y1, x2, y1+r,
+                x2, y2-r, x2, y2, x2-r, y2, x1+r, y2,
+                x1, y2, x1, y2-r, x1, y1+r, x1, y1
+            ]
+            header.create_polygon(
+                points,
+                smooth=True,
+                fill="#bfe9f7",
+                outline="#bfe9f7",
+            )
+            cx = width / 2
+            header.create_text(
+                cx - 48,
+                27,
+                text="SASPy Studio",
+                fill="black",
+                font=(UI_FONT, 17, "bold"),
+                anchor="e",
+            )
+            header.create_text(
+                cx - 42,
+                28,
+                text="(SAS OnDemand Programming Studio)",
+                fill="black",
+                font=(UI_FONT, 12),
+                anchor="w",
+            )
 
-        tk.Label(
-            header, text="SAS OnDemand",
-            bg=BG, fg=PURPLE,
-            font=("Segoe UI", 9, "bold")
-        ).pack(side="left", padx=(12, 0), pady=(6, 0))
+        header.bind("<Configure>", draw_header_band)
 
         # ---------- Study setup and execution ----------
         setup_card = ttk.LabelFrame(
@@ -451,60 +951,156 @@ class SASPyStudio(tk.Tk):
         )
         setup_card.pack(fill="x", padx=20, pady=(0, 5))
 
-        # Two location/program controls per row to use the available width.
-        for col in (1, 4):
-            setup_card.columnconfigure(col, weight=1)
+        # Responsive two-column setup. The input field itself is clickable,
+        # so separate Browse buttons are unnecessary.
+        for col in (1, 3):
+            setup_card.columnconfigure(col, weight=1, uniform="setup_fields")
+        setup_card.columnconfigure(0, weight=0)
+        setup_card.columnconfigure(2, weight=0)
 
-        setup_items = [
-            (0, 0, "Study Location:", self.study_root,
-             lambda: self.browse_folder(self.study_root), "#7C3AED"),
-            (0, 3, "Programs Location:", self.programs_root,
-             lambda: self.browse_folder(self.programs_root), "#7C3AED"),
-            (1, 0, "Global Macros:", self.global_macros_path,
-             lambda: self.browse_folder(self.global_macros_path), "#7C3AED"),
-            (1, 3, "Program:", self.program_path,
-             self.browse_manual_program, "#3B82F6"),
-        ]
+        def clickable_field(parent, variable, command, placeholder, icon="", optional=False):
+            outer = tk.Frame(
+                parent,
+                bg="#ffffff",
+                highlightbackground="#b8cfe4",
+                highlightcolor="#5f9ed1",
+                highlightthickness=1,
+                bd=0,
+                cursor="hand2",
+                height=46,
+            )
+            outer.pack_propagate(False)
 
-        for row, col, label, variable, command, colour in setup_items:
-            ttk.Label(setup_card, text=label, style="Card.TLabel").grid(
-                row=row, column=col, padx=(10, 5), pady=3, sticky="w"
+            display = tk.Entry(
+                outer,
+                textvariable=variable,
+                relief="flat",
+                bd=0,
+                bg="#ffffff",
+                fg="#12395f",
+                readonlybackground="#ffffff",
+                font=(UI_FONT, FONT_FIELD, "bold"),
+                cursor="hand2",
             )
-            ttk.Entry(setup_card, textvariable=variable).grid(
-                row=row, column=col + 1, padx=(0, 4), pady=3, sticky="ew"
+            display.pack(
+                side="left",
+                fill="both",
+                expand=True,
+                padx=(12, 6),
+                pady=6,
             )
-            wrap = tk.Frame(setup_card, bg=PANEL)
-            wrap.grid(row=row, column=col + 2, padx=(0, 9), pady=2)
-            browse_btn = RoundedButton(
-                wrap, "Browse", command, colour,
-                "#9B63F0" if colour == "#7C3AED" else "#5C9CFF",
-                width=72, height=25, radius=8, font=("Segoe UI", 8, "bold")
-            )
-            browse_btn.pack()
-            add_tooltip(
-                browse_btn,
-                f"Browse and select the {label.rstrip(':').lower()}."
-            )
+            display.configure(state="readonly")
 
-        # Compact control/action row: use the full width of the setup card.
-        bottom_wrap = tk.Frame(setup_card, bg=PANEL)
-        bottom_wrap.grid(row=2, column=0, columnspan=6, padx=10, pady=(4, 5), sticky="ew")
+            drop = tk.Canvas(
+                outer,
+                width=30,
+                height=44,
+                bg="#eef6ff",
+                highlightthickness=0,
+                bd=0,
+                cursor="hand2",
+            )
+            drop.pack(side="right", fill="y")
+            drop.create_line(0, 0, 0, 44, fill="#d4e2ef")
+            if optional:
+                drop.create_text(
+                    15, 22, text="+", fill="#12395f",
+                    font=(UI_FONT, FONT_BUTTON, "bold")
+                )
+            else:
+                drop.create_polygon(
+                    10, 19, 20, 19, 15, 26,
+                    fill="#12395f", outline="#12395f"
+                )
 
-        plan_wrap = tk.Frame(bottom_wrap, bg=PANEL)
+            for widget in (outer, display, drop):
+                widget.bind("<Button-1>", lambda _e, cmd=command: cmd())
+
+            add_tooltip(outer, placeholder)
+            return outer
+
+        # Row 0: primary required roots.
+        ttk.Label(
+            setup_card, text="Study Location", style="Card.TLabel"
+        ).grid(row=0, column=0, padx=(12, 7), pady=(8, 4), sticky="w")
+
+        study_field = clickable_field(
+            setup_card,
+            self.study_root,
+            lambda: self.browse_folder(self.study_root),
+            "Select the local study data/output root.",
+            "▣",
+        )
+        study_field.grid(row=0, column=1, padx=(0, 16), pady=(6, 4), sticky="ew")
+
+        ttk.Label(
+            setup_card, text="Programs Location", style="Card.TLabel"
+        ).grid(row=0, column=2, padx=(0, 7), pady=(8, 4), sticky="w")
+
+        programs_field = clickable_field(
+            setup_card,
+            self.programs_root,
+            lambda: self.browse_folder(self.programs_root),
+            "Select the repository root containing the sas folder.",
+            "▣",
+        )
+        programs_field.grid(row=0, column=3, padx=(0, 12), pady=(6, 4), sticky="ew")
+
+        # Row 1: selected program and truly optional global macros.
+        ttk.Label(
+            setup_card, text="Program", style="Card.TLabel"
+        ).grid(row=1, column=0, padx=(12, 7), pady=4, sticky="w")
+
+        program_field = clickable_field(
+            setup_card,
+            self.program_path,
+            self.browse_manual_program,
+            "Select one SAS program when Program Plan is not used.",
+            "▤",
+        )
+        program_field.grid(row=1, column=1, padx=(0, 16), pady=4, sticky="ew")
+
+        ttk.Label(
+            setup_card, text="Global Macros (Optional)", style="Card.TLabel"
+        ).grid(row=1, column=2, padx=(0, 7), pady=4, sticky="w")
+
+        global_field = clickable_field(
+            setup_card,
+            self.global_macros_path,
+            lambda: self.browse_folder(self.global_macros_path),
+            "Optional: add a folder of global SAS macros. Leave blank to skip.",
+            "＋",
+            optional=True,
+        )
+        global_field.grid(row=1, column=3, padx=(0, 12), pady=4, sticky="ew")
+
+        # ---------- Execution controls ----------
+        # Two compact rows keep all actions visible at the normal window size.
+        control_wrap = tk.Frame(setup_card, bg=PANEL)
+        control_wrap.grid(
+            row=2, column=0, columnspan=4,
+            padx=10, pady=(5, 6), sticky="ew"
+        )
+
+        # Left: plan selection. Right: optional download control.
+        option_row = tk.Frame(control_wrap, bg=PANEL)
+        option_row.pack(fill="x", pady=(0, 5))
+
+        plan_wrap = tk.Frame(option_row, bg=PANEL)
         plan_wrap.pack(side="left")
 
         self.plan_check = GreenCheck(plan_wrap, "Use Program Plan", self.use_program_plan)
         self.plan_check.pack(side="left")
         add_tooltip(
             self.plan_check,
-            "When selected, run programs from sas/program_plan.xlsx instead of only the Program field."
+            "Run programs from <Programs Location>/sas/program_plan.xlsx instead of the Program field."
         )
 
         self.plan_display = tk.Label(
             plan_wrap, text="sas/program_plan.xlsx",
-            bg=PANEL, fg=MUTED, font=("Segoe UI", 8)
+            bg=PANEL, fg=MUTED, font=(UI_FONT, FONT_SMALL)
         )
-        self.plan_display.pack(side="left", padx=(7, 5))
+        self.plan_display.pack(side="left", padx=(8, 6))
         add_tooltip(
             self.plan_display,
             "Program plan is automatically derived from <Programs Location>/sas/program_plan.xlsx."
@@ -514,83 +1110,95 @@ class SASPyStudio(tk.Tk):
         preview_wrap.pack(side="left")
         self.previewbtn = RoundedButton(
             preview_wrap, "Preview", self.preview_program_plan,
-            "#0F766E", "#159287", width=68, height=25, radius=8,
-            font=("Segoe UI", 8, "bold")
+            "#0F766E", "#0D9488", width=90, height=46, radius=10,
+            font=(UI_FONT, FONT_BUTTON, "bold")
         )
         self.previewbtn.pack()
-        add_tooltip(self.previewbtn, "Preview the programs and execution order in sas/program_plan.xlsx.")
-
-        action_wrap = tk.Frame(bottom_wrap, bg=PANEL)
-        action_wrap.pack(side="left", padx=(16, 0))
-
-        self.runbtn = RoundedButton(
-            action_wrap, "▶  Run SAS", self.start_run,
-            "#2563EB", "#4A7DF2", width=108, height=31,
-            radius=9, font=("Segoe UI", 8, "bold")
+        add_tooltip(
+            self.previewbtn,
+            "Preview the programs and execution order in sas/program_plan.xlsx."
         )
-        self.runbtn.pack(side="left")
-        add_tooltip(self.runbtn, "Run the selected SAS program or the enabled program plan on SAS OnDemand.")
 
-        self.restartbtn = RoundedButton(
-            action_wrap, "↻  Restart SAS", self.restart_sas,
-            "#FF9933", "#FFBC80", fg="#222222",
-            width=108, height=31, radius=9, font=("Segoe UI", 8, "bold")
+        self.download_check = GreenCheck(
+            option_row, "Download WORK outputs", self.download_outputs
         )
-        self.restartbtn.pack(side="left", padx=(6, 0))
-        add_tooltip(self.restartbtn, "End the current SAS session so the next run starts with a fresh SAS OnDemand session.")
-
-        right_wrap = tk.Frame(bottom_wrap, bg=PANEL)
-        right_wrap.pack(side="right")
-
-        self.download_check = GreenCheck(right_wrap, "Download WORK outputs", self.download_outputs)
-        self.download_check.pack(side="left", padx=(0, 12))
+        self.download_check.pack(side="right")
         add_tooltip(
             self.download_check,
             "Download supported files created in remote SAS WORK in addition to permanent study outputs."
         )
 
-        self.clearbtn = RoundedButton(
-            right_wrap, "Clear Window", self.clear_execution_window,
-            "#475569", "#64748B", fg="white", width=96, height=30,
-            radius=9, font=("Segoe UI", 8, "bold")
+        # Action row is deliberately separated so Terminate never gets pushed
+        # outside the normal application window.
+        action_row = tk.Frame(control_wrap, bg=PANEL)
+        action_row.pack(fill="x")
+
+        action_left = tk.Frame(action_row, bg=PANEL)
+        action_left.pack(side="left")
+
+        self.runbtn = RoundedButton(
+            action_left, "▶  Run SAS", self.start_run,
+            "#3b82f6", "#5c9cff", width=145, height=46,
+            radius=12, font=(UI_FONT, FONT_BUTTON, "bold")
         )
-        self.clearbtn.pack(side="left")
-        add_tooltip(self.clearbtn, "Clear the Run Information and Execution / Log Check display without ending SAS.")
+        self.runbtn.pack(side="left")
+        add_tooltip(
+            self.runbtn,
+            "Run the selected SAS program or the enabled program plan on SAS OnDemand."
+        )
+
+        self.restartbtn = RoundedButton(
+            action_left, "↻  Restart SAS", self.restart_sas,
+            "#F59E0B", "#D97706", fg="#1F2937",
+            width=145, height=46, radius=12,
+            font=(UI_FONT, FONT_BUTTON, "bold")
+        )
+        self.restartbtn.pack(side="left", padx=(7, 0))
+        add_tooltip(
+            self.restartbtn,
+            "End the current SAS session so the next run starts with a fresh SAS OnDemand session."
+        )
+
+        action_right = tk.Frame(action_row, bg=PANEL)
+        action_right.pack(side="right")
+
+        self.viewerbtn = RoundedButton(
+            action_right, "Dataset Viewer", self.open_dataset_viewer,
+            "#2563eb", "#4a7df2", width=145, height=46,
+            radius=12, font=(UI_FONT, FONT_BUTTON, "bold")
+        )
+        self.viewerbtn.pack(side="left")
+        add_tooltip(
+            self.viewerbtn,
+            "Browse synchronized local RAW, SDTM and ADAM SAS7BDAT datasets without starting SAS."
+        )
+
+        self.clearbtn = RoundedButton(
+            action_right, "Clear Window", self.clear_execution_window,
+            "#9ca3af", "#b6bcc7", fg="white",
+            width=135, height=46, radius=12,
+            font=(UI_FONT, FONT_BUTTON, "bold")
+        )
+        self.clearbtn.pack(side="left", padx=(7, 0))
+        add_tooltip(
+            self.clearbtn,
+            "Clear the Run Information and Execution / Log Check display without ending SAS."
+        )
 
         self.closebtn = RoundedButton(
-            right_wrap, "Terminate", self.close_app,
-            "#991B1B", "#B91C1C", width=96, height=30, radius=9,
-            font=("Segoe UI", 8, "bold")
+            action_right, "Terminate", self.close_app,
+            "#DC2626", "#B91C1C", width=135, height=46,
+            radius=12, font=(UI_FONT, FONT_BUTTON, "bold")
         )
-        self.closebtn.pack(side="left", padx=(6, 0))
-        add_tooltip(self.closebtn, "Terminate the SAS session and close SASPy Studio.")
-
-        # ---------- Run information ----------
-        info_card = ttk.LabelFrame(
-            self, text="Run Information", style="Card.TLabelframe"
+        self.closebtn.pack(side="left", padx=(7, 0))
+        add_tooltip(
+            self.closebtn,
+            "Terminate the SAS session and close SASPy Studio."
         )
-        info_card.pack(fill="x", padx=20, pady=(0, 6))
-
-        self.status_label = tk.Label(
-            info_card, textvariable=self.status,
-            bg=PANEL, fg=BLUE,
-            font=("Segoe UI", 10, "bold")
-        )
-        self.status_label.pack(anchor="w", padx=12, pady=(5, 1))
-
-        tk.Label(
-            info_card, textvariable=self.info,
-            bg=PANEL, fg=MUTED, font=("Segoe UI", 9)
-        ).pack(anchor="w", padx=12, pady=(0, 1))
-
-        tk.Label(
-            info_card, textvariable=self.log_counts,
-            bg=PANEL, fg=TEXT, font=("Segoe UI", 9, "bold")
-        ).pack(anchor="w", padx=12, pady=(0, 5))
 
         # ---------- Execution ----------
         output_card = ttk.LabelFrame(
-            self, text="Execution / Log Check", style="Card.TLabelframe"
+            self, text="SAS Console", style="Card.TLabelframe"
         )
         output_card.pack(
             fill="both", expand=True, padx=20, pady=(0, 12)
@@ -599,12 +1207,32 @@ class SASPyStudio(tk.Tk):
         self.box = ScrolledText(
             output_card,
             height=8,
-            font=("Consolas", 9),
-            bg="#FCFCFD", fg="#263238",
+            font=(MONO_FONT, FONT_CONSOLE),
+            bg="#ffffff", fg="#1f2937",
             relief="flat", bd=0
         )
         self.box.pack(fill="both", expand=True, padx=8, pady=6)
         self.box.configure(state="disabled")
+
+        console_footer = tk.Frame(output_card, bg=PANEL)
+        console_footer.pack(fill="x", padx=10, pady=(0, 7))
+
+        tk.Label(
+            console_footer,
+            textvariable=self.status,
+            bg=PANEL,
+            fg=BLUE,
+            font=(UI_FONT, FONT_SMALL, "bold"),
+        ).pack(side="left")
+
+        tk.Label(
+            console_footer,
+            textvariable=self.log_counts,
+            bg=PANEL,
+            fg=MUTED,
+            font=(UI_FONT, FONT_BUTTON, "bold"),
+        ).pack(side="right")
+
 
     def refresh_derived_paths(self):
         programs_text = self.programs_root.get().strip()
@@ -636,6 +1264,21 @@ class SASPyStudio(tk.Tk):
         )
         if filename:
             self.program_path.set(filename)
+
+    def open_dataset_viewer(self):
+        """Open the local SAS7BDAT dataset browser."""
+        study_location = self.study_root.get().strip()
+        if not study_location:
+            messagebox.showwarning(
+                "Dataset Viewer",
+                "Select a Study Location first.",
+                parent=self
+            )
+            return
+        viewer = DatasetViewer(self, study_location)
+        viewer.transient(self)
+        viewer.lift()
+        viewer.focus_force()
 
     def clear_execution_window(self):
         self.box.configure(state="normal")
@@ -841,6 +1484,31 @@ class SASPyStudio(tk.Tk):
             "Restart SAS: next run will start a fresh SAS session."
         )
 
+
+    def cleanup_runtime_config(self):
+        """Remove the temporary SASPy runtime configuration file."""
+        candidates = {Path(__file__).resolve().parent / "saspy_runtime_cfg.py"}
+
+        for attr in (
+            "runtime_cfg_path",
+            "runtime_config_path",
+            "saspy_runtime_cfg",
+            "sas_config_path",
+        ):
+            value = getattr(self, attr, None)
+            if value:
+                try:
+                    candidates.add(Path(value))
+                except TypeError:
+                    pass
+
+        for path in candidates:
+            try:
+                if path.name.lower() == "saspy_runtime_cfg.py" and path.exists():
+                    path.unlink()
+            except OSError:
+                pass
+
     def close_app(self):
         if self.running:
             messagebox.showwarning(
@@ -850,6 +1518,7 @@ class SASPyStudio(tk.Tk):
                 "then close Studio."
             )
             return
+        self.cleanup_runtime_config()
         self.destroy()
 
     @staticmethod
@@ -875,6 +1544,63 @@ class SASPyStudio(tk.Tk):
         raise RuntimeError(
             "Could not determine the resolved remote SAS WORK path.\n\n" + log
         )
+
+    @staticmethod
+    def snapshot_remote_sas_datasets(sas):
+        """
+        Snapshot permanent RAW/SDTM/ADAM members currently visible to SAS.
+
+        MODATE detects overwritten datasets; NOBS/NVAR are included as
+        additional change indicators. The returned keys are (LIBNAME, MEMNAME).
+        """
+        token = "__SPYDS__="
+        sas_code = (
+            "proc sql noprint;\n"
+            "  create table work._spyds_snapshot as\n"
+            "  select upcase(libname) as libname length=8,\n"
+            "         upcase(memname) as memname length=32,\n"
+            "         modate,\n"
+            "         nobs,\n"
+            "         nvar\n"
+            "  from dictionary.tables\n"
+            "  where upcase(libname) in ('RAW','SDTM','ADAM')\n"
+            "    and upcase(memtype)='DATA'\n"
+            "  order by libname, memname;\n"
+            "quit;\n"
+            "data _null_;\n"
+            "  set work._spyds_snapshot;\n"
+            "  length _stamp $40;\n"
+            "  _stamp=put(modate,hex16.);\n"
+            f'  put "{token}" libname "|" memname "|" _stamp "|" nobs "|" nvar;\n'
+            "run;\n"
+        )
+        result = sas.submit(sas_code)
+        log = flatten_submit_part(result.get("LOG"))
+
+        snapshot = {}
+        for line in log.splitlines():
+            if token not in line:
+                continue
+            payload = line.split(token, 1)[1].strip()
+            parts = [part.strip() for part in payload.split("|")]
+            if len(parts) < 5:
+                continue
+            libname, memname, modate, nobs, nvar = parts[:5]
+            snapshot[(libname.upper(), memname.upper())] = (
+                modate,
+                nobs,
+                nvar,
+            )
+        return snapshot
+
+    @staticmethod
+    def changed_remote_sas_datasets(before, after):
+        """Return permanent SAS datasets created or changed during this run."""
+        changed = []
+        for key, state in after.items():
+            if key not in before or before.get(key) != state:
+                changed.append(key)
+        return sorted(changed)
 
     @staticmethod
     def list_remote_files(sas, remote_dir):
@@ -1081,31 +1807,77 @@ class SASPyStudio(tk.Tk):
         source = macro_pattern.sub(normalize_path_assignment, source)
         return source
 
-    def sync_remote_study_back(self, sas, local_root, remote_root):
-        """Download permanent SAS data and final SAS outputs to local study folders."""
-        rel_dirs = [
-            "data/sas/raw", "data/sas/sdtm", "data/sas/adam",
-            "output/sas/tables", "output/sas/listings", "output/sas/figures",
-        ]
+    def sync_remote_study_back(
+        self,
+        sas,
+        local_root,
+        remote_root,
+        changed_datasets=None,
+    ):
+        """
+        Refresh only permanent SAS datasets changed by the current run.
+
+        changed_datasets contains (LIBNAME, MEMNAME) keys such as:
+            ("SDTM", "DM")
+            ("SDTM", "SUPPDM")
+
+        This avoids re-downloading every RAW/SDTM/ADAM dataset after a
+        one-program run.
+        """
         downloaded = []
-        for rel in rel_dirs:
+        changed_datasets = set(changed_datasets or [])
+
+        lib_dirs = {
+            "RAW": "data/sas/raw",
+            "SDTM": "data/sas/sdtm",
+            "ADAM": "data/sas/adam",
+        }
+
+        for libname, memname in sorted(changed_datasets):
+            rel = lib_dirs.get(libname.upper())
+            if not rel:
+                continue
+
             remote_dir = remote_root.rstrip("/") + "/" + rel
             local_dir = local_root / Path(rel)
-            names = sorted(self.list_remote_files(sas, remote_dir))
-            if not names:
-                continue
             local_dir.mkdir(parents=True, exist_ok=True)
+
+            # SAS member filenames on the OnDemand Linux host are normally
+            # lower-case. Resolve against the actual directory listing so the
+            # code remains safe if case differs.
+            names = self.list_remote_files(sas, remote_dir)
+            target_name = None
+            expected = f"{memname}.sas7bdat".lower()
             for name in names:
-                remote_file = remote_dir.rstrip("/") + "/" + name
-                local_file = local_dir / name
-                try:
-                    sas.download(str(local_file), remote_file, overwrite=True)
-                    downloaded.append(local_file)
-                except Exception as exc:
-                    self.write_box(
-                        f"Study sync download warning for {rel}/{name}: {exc}"
-                    )
+                if name.lower() == expected:
+                    target_name = name
+                    break
+
+            if target_name is None:
+                self.write_box(
+                    f"Study sync warning: changed dataset "
+                    f"{libname}.{memname} was not found in {remote_dir}."
+                )
+                continue
+
+            remote_file = remote_dir.rstrip("/") + "/" + target_name
+            local_file = local_dir / target_name.lower()
+
+            try:
+                sas.download(
+                    str(local_file),
+                    remote_file,
+                    overwrite=True,
+                )
+                downloaded.append(local_file)
+            except Exception as exc:
+                self.write_box(
+                    f"Study sync download warning for "
+                    f"{libname}.{memname}: {exc}"
+                )
+
         return downloaded
+
 
     def write_box(self, text):
         def update():
@@ -1192,7 +1964,7 @@ class SASPyStudio(tk.Tk):
             repository_root = self._required_folder(self.programs_root.get(), "Programs location")
             programs_root = self._required_folder(str(repository_root / "sas"), "SAS programs folder")
             autoexec = self._required_file(str(programs_root / "autoexec.sas"), "Autoexec")
-            global_macros = self._required_folder(self.global_macros_path.get(), "Global macros")
+            global_macros = Path(self.global_macros_path.get().strip()).expanduser() if self.global_macros_path.get().strip() else None
             study_macros_path = programs_root / "macros"
             study_macros = study_macros_path.resolve() if study_macros_path.is_dir() else None
 
@@ -1234,7 +2006,7 @@ class SASPyStudio(tk.Tk):
                 "plan_items": plan_items,
                 "use_program_plan": self.use_program_plan.get(),
                 "use_autoexec": True,
-                "use_global_macros": True,
+                "use_global_macros": global_macros is not None and global_macros.is_dir(),
                 "use_study_macros": study_macros is not None,
                 "download_outputs": self.download_outputs.get(),
                 "sync_study": True,
@@ -1349,7 +2121,7 @@ class SASPyStudio(tk.Tk):
                     ("AUTOEXEC", settings["autoexec"])
                 )
 
-            if settings["use_global_macros"]:
+            if settings["use_global_macros"] and settings["global_macros"] is not None:
                 global_files = sorted(
                     settings["global_macros"].glob("*.sas"),
                     key=lambda p: p.name.lower()
@@ -1438,6 +2210,14 @@ class SASPyStudio(tk.Tk):
                 work_before = self.list_remote_files(
                     sas, remote_work
                 )
+
+            # Baseline permanent datasets immediately before the selected
+            # program(s) execute. This lets us detect only members changed by
+            # this run, including overwritten existing datasets.
+            permanent_before = {}
+            if settings["sync_study"]:
+                self.set_status("Snapshotting permanent datasets...")
+                permanent_before = self.snapshot_remote_sas_datasets(sas)
 
             programs = settings["programs"]
             execution_items = settings["plan_items"]
@@ -1544,16 +2324,43 @@ class SASPyStudio(tk.Tk):
                 )
 
             study_downloaded = []
+            changed_datasets = []
             if settings["sync_study"]:
-                self.set_status("Synchronizing study files...")
-                study_downloaded = self.sync_remote_study_back(
-                    sas,
-                    settings["study_root"],
-                    remote_study_root,
+                self.set_status("Checking changed permanent datasets...")
+                permanent_after = self.snapshot_remote_sas_datasets(sas)
+                changed_datasets = self.changed_remote_sas_datasets(
+                    permanent_before,
+                    permanent_after,
                 )
-                self.write_box(
-                    f"Study sync: {len(study_downloaded)} file(s) synchronized back locally."
-                )
+
+                if changed_datasets:
+                    changed_text = ", ".join(
+                        f"{lib}.{mem}" for lib, mem in changed_datasets
+                    )
+                    self.write_box(
+                        f"Changed permanent datasets: {changed_text}"
+                    )
+                    self.set_status("Refreshing changed datasets locally...")
+                    study_downloaded = self.sync_remote_study_back(
+                        sas,
+                        settings["study_root"],
+                        remote_study_root,
+                        changed_datasets=changed_datasets,
+                    )
+                    self.write_box(
+                        f"Study sync: {len(study_downloaded)} changed "
+                        f"dataset(s) refreshed locally."
+                    )
+                    if study_downloaded:
+                        self.write_box(
+                            "Refreshed: "
+                            + ", ".join(p.name for p in study_downloaded)
+                        )
+                else:
+                    self.write_box(
+                        "Study sync: No permanent SAS datasets changed; "
+                        "nothing to refresh locally."
+                    )
 
             downloaded = []
             if settings["download_outputs"] and not settings["use_program_plan"]:
@@ -1636,4 +2443,7 @@ class SASPyStudio(tk.Tk):
 
 if __name__ == "__main__":
     app = SASPyStudio()
-    app.mainloop()
+    try:
+        app.mainloop()
+    finally:
+        app.cleanup_runtime_config()
