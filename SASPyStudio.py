@@ -2,7 +2,7 @@
 ### Program Name:   SASPyStudio.py                                          ###
 ###                                                                         ###                                              
 ### Application:    SASPy Studio                                            ###                                          
-### Version:        1.0                                                     ###
+### Version:        2.0                                                     ###
 ###                                                                         ###
 ### Purpose:        Provide a lightweight desktop interface for executing   ###
 ###                 local SAS programs using SAS OnDemand for Academics     ###
@@ -37,6 +37,9 @@
 ###-------------------------------------------------------------------------###
 ### Change History:                                                         ###
 ### 1.0       30Sep2026    Initial release of SASPy Studio.                 ###
+###                                                                         ###
+### 2.0       30Sep2026    Updated to store datasets and added viewer.      ###
+###                                                                         ###
 ###-------------------------------------------------------------------------###
 
 import json
@@ -1487,7 +1490,7 @@ class SASPyStudio(tk.Tk):
 
     def cleanup_runtime_config(self):
         """Remove the temporary SASPy runtime configuration file."""
-        candidates = {Path(__file__).resolve().parent / "saspy_runtime_cfg.py"}
+        candidates = {Path(__file__).resolve().parent / ".saspy_runtime_cfg.py"}
 
         for attr in (
             "runtime_cfg_path",
@@ -1504,7 +1507,7 @@ class SASPyStudio(tk.Tk):
 
         for path in candidates:
             try:
-                if path.name.lower() == "saspy_runtime_cfg.py" and path.exists():
+                if path.name.lower() == ".saspy_runtime_cfg.py" and path.exists():
                     path.unlink()
             except OSError:
                 pass
