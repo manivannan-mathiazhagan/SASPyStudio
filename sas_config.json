@@ -7,5 +7,5 @@
     "authkey": "oda",
     "authinfo": "_authinfo",
     "encoding": "utf-8",
-    "global_macros": "D:\\Work\\MyGithub\\systems-nexus\\SASGlobalMacros"
+    "global_utils": "D:\\Work\\MyGithub\\systems-nexus\\global_utils"
 }

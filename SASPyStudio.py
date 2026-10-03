@@ -2,7 +2,7 @@
 ### Program Name:   SASPyStudio.py                                          ###
 ###                                                                         ###                                              
 ### Application:    SASPy Studio                                            ###                                          
-### Version:        2.0                                                     ###
+### Version:        2.0.0                                                   ###
 ###                                                                         ###
 ### Purpose:        Provide a lightweight desktop interface for executing   ###
 ###                 local SAS programs using SAS OnDemand for Academics     ###
@@ -43,6 +43,7 @@
 ###-------------------------------------------------------------------------###
 
 import json
+import importlib.util
 import os
 import threading
 import time
@@ -83,6 +84,7 @@ def load_sas_config():
         "iom_port",
         "authkey",
         "authinfo",
+        "global_utils",
     )
     missing = [name for name in required if name not in cfg]
     if missing:
@@ -188,9 +190,9 @@ def check_sas_log(log_text):
 
 
 class DatasetViewer(tk.Toplevel):
-    """Browse synchronized local RAW/SDTM/ADAM SAS7BDAT files."""
+    """Browse synchronized local RAW/SDTM/ADAM/SPEC SAS7BDAT files."""
 
-    LIBRARIES = ("RAW", "SDTM", "ADAM")
+    LIBRARIES = ("RAW", "SDTM", "ADAM", "SPEC")
 
     def __init__(self, master, study_location):
         super().__init__(master)
@@ -657,8 +659,20 @@ class SASPyStudio(tk.Tk):
         # Project locations. The finalized repository/study structure is derived from these roots.
         self.study_root = tk.StringVar()
         self.programs_root = tk.StringVar()
+        self.global_utils_path = tk.StringVar(
+            value=str(self.config.get("global_utils", ""))
+        )
         self.global_macros_path = tk.StringVar(
-            value=str(self.config.get("global_macros", ""))
+            value=str(Path(self.global_utils_path.get()) / "sas")
+            if self.global_utils_path.get().strip() else ""
+        )
+        self.global_python_path = (
+            Path(self.global_utils_path.get()) / "python"
+            if self.global_utils_path.get().strip() else None
+        )
+        self.global_r_path = (
+            Path(self.global_utils_path.get()) / "r"
+            if self.global_utils_path.get().strip() else None
         )
         self.program_path = tk.StringVar()
 
@@ -1031,14 +1045,14 @@ class SASPyStudio(tk.Tk):
         program_field.grid(row=1, column=1, padx=(0, 16), pady=4, sticky="ew")
 
         ttk.Label(
-            setup_card, text="Global Macros (Optional)", style="Card.TLabel"
+            setup_card, text="Global SAS Utilities", style="Card.TLabel"
         ).grid(row=1, column=2, padx=(0, 7), pady=4, sticky="w")
 
         global_field = clickable_field(
             setup_card,
             self.global_macros_path,
             lambda: self.browse_folder(self.global_macros_path),
-            "Optional: use the configured global SAS macro library. Select another folder if needed.",
+            "Configured from <global_utils>/sas. Select another SAS utilities folder if needed.",
             optional=True,
         )
         global_field.grid(row=1, column=3, padx=(0, 12), pady=4, sticky="ew")
@@ -1131,15 +1145,27 @@ class SASPyStudio(tk.Tk):
         action_right = tk.Frame(action_row, bg=PANEL)
         action_right.pack(side="right")
 
+        self.syncspecbtn = RoundedButton(
+            action_right, "Sync Specs", self.start_sync_specs,
+            "#0F766E", "#0D9488", width=130, height=46,
+            radius=12, font=(UI_FONT, FONT_BUTTON, "bold")
+        )
+        self.syncspecbtn.pack(side="left")
+        add_tooltip(
+            self.syncspecbtn,
+            "Read available specification workbooks from <Programs Repository>/Specs "
+            "and create the SAS SPEC programming library."
+        )
+
         self.viewerbtn = RoundedButton(
             action_right, "Dataset Viewer", self.open_dataset_viewer,
             "#2563eb", "#4a7df2", width=145, height=46,
             radius=12, font=(UI_FONT, FONT_BUTTON, "bold")
         )
-        self.viewerbtn.pack(side="left")
+        self.viewerbtn.pack(side="left", padx=(7, 0))
         add_tooltip(
             self.viewerbtn,
-            "Browse synchronized local RAW, SDTM and ADAM SAS7BDAT datasets without starting SAS."
+            "Browse synchronized local RAW, SDTM, ADAM and SPEC SAS7BDAT datasets."
         )
 
         self.clearbtn = RoundedButton(
@@ -1240,6 +1266,175 @@ class SASPyStudio(tk.Tk):
         viewer.transient(self)
         viewer.lift()
         viewer.focus_force()
+
+    def _load_sync_specs_module(self):
+        """Load sync_specs.py from the configured global Python utilities."""
+        global_root = self.global_utils_path.get().strip()
+        if not global_root:
+            raise ValueError("global_utils is not configured in sas_config.json.")
+
+        script = Path(global_root).expanduser() / "python" / "sync_specs.py"
+        if not script.exists():
+            raise FileNotFoundError(f"Specification utility not found:\n{script}")
+
+        module_spec = importlib.util.spec_from_file_location(
+            "saspystudio_sync_specs", script
+        )
+        if module_spec is None or module_spec.loader is None:
+            raise ImportError(f"Unable to load:\n{script}")
+
+        module = importlib.util.module_from_spec(module_spec)
+        module_spec.loader.exec_module(module)
+        if not hasattr(module, "sync_specs"):
+            raise AttributeError(f"sync_specs() not found in:\n{script}")
+        return module
+
+    def start_sync_specs(self):
+        """Run specification synchronization in a worker thread."""
+        if self.running:
+            messagebox.showinfo(
+                "SAS is busy", "Wait for the current SAS operation to finish.",
+                parent=self
+            )
+            return
+
+        repository = self.programs_root.get().strip()
+        study_location = self.study_root.get().strip()
+        if not repository or not study_location:
+            messagebox.showwarning(
+                "Sync Specs",
+                "Select Study Location and Programs Repository first.",
+                parent=self
+            )
+            return
+
+        specs_dir = Path(repository).expanduser() / "Specs"
+        if not specs_dir.exists():
+            messagebox.showwarning(
+                "Sync Specs", f"Specs folder not found:\n{specs_dir}", parent=self
+            )
+            return
+
+        self.running = True
+        self.status.set("Synchronizing specifications...")
+        self.syncspecbtn.configure(state="disabled")
+        self.runbtn.configure(state="disabled")
+        threading.Thread(target=self._sync_specs_worker, daemon=True).start()
+
+    def _sync_specs_worker(self):
+        """
+        Connect to ODA, create SPEC datasets, and download them to the local
+        study data/sas/spec folder for Dataset Viewer.
+        """
+        sas = None
+        try:
+            repository = Path(self.programs_root.get().strip()).expanduser()
+            module = self._load_sync_specs_module()
+
+            self.write_box("Sync Specs: connecting to SAS OnDemand...")
+            cfg = self.config
+            cfgname = build_runtime_config(cfg)
+            authinfo_path = resolve_authinfo_path(cfg)
+            self.write_box(f"Authinfo: {authinfo_path}")
+
+            old_userprofile = os.environ.get("USERPROFILE")
+            old_home = os.environ.get("HOME")
+            try:
+                # Preserve the original SASPyStudio authentication behavior:
+                # SASPy searches for _authinfo in HOME/USERPROFILE.
+                os.environ["USERPROFILE"] = str(authinfo_path.parent)
+                os.environ["HOME"] = str(authinfo_path.parent)
+
+                sas = saspy.SASsession(
+                    cfgname=cfgname,
+                    cfgfile=str(RUNTIME_CFG_FILE),
+                    results="HTML",
+                )
+            finally:
+                if old_userprofile is None:
+                    os.environ.pop("USERPROFILE", None)
+                else:
+                    os.environ["USERPROFILE"] = old_userprofile
+
+                if old_home is None:
+                    os.environ.pop("HOME", None)
+                else:
+                    os.environ["HOME"] = old_home
+
+            self.write_box("Sync Specs: processing specification workbooks...")
+            result = module.sync_specs(
+                study_root=repository, sas=sas, verbose=False
+            )
+
+            local_spec = (
+                Path(self.study_root.get().strip()) / "data" / "sas" / "spec"
+            )
+            local_spec.mkdir(parents=True, exist_ok=True)
+
+            members = sorted(
+                key.split(".", 1)[1]
+                for key in result.get("sas_tables", {})
+                if key.upper().startswith("SPEC.")
+            )
+
+            # SPEC is created below SAS WORK by sync_specs.py. Resolve its path
+            # and use the same SASPy download method used by the studio.
+            path_result = sas.submit(
+                '%put __SASPYSTUDIO_SPEC__=%sysfunc(pathname(spec));'
+            )
+            spec_log = flatten_submit_part(path_result.get("LOG"))
+            remote_spec = ""
+            for raw in spec_log.splitlines():
+                line = raw.strip()
+                for prefix in (
+                    "__SASPYSTUDIO_SPEC__=",
+                    "NOTE: __SASPYSTUDIO_SPEC__="
+                ):
+                    if line.startswith(prefix):
+                        remote_spec = line[len(prefix):].strip().replace("\\", "/")
+
+            if not remote_spec:
+                raise RuntimeError("Unable to resolve the remote SPEC library path.")
+
+            for member in members:
+                remote_file = f"{remote_spec.rstrip('/')}/{member.lower()}.sas7bdat"
+                local_file = local_spec / f"{member.lower()}.sas7bdat"
+                dl = sas.download(
+                    str(local_file), remote_file, overwrite=True
+                )
+                if isinstance(dl, dict) and dl.get("Success") is False:
+                    raise RuntimeError(
+                        f"Unable to download SPEC.{member}: {dl.get('LOG', dl)}"
+                    )
+
+            found = ", ".join(result.get("found", {}).keys()) or "None"
+            self.write_box(
+                f"Sync Specs complete. Standards: {found}. "
+                f"SPEC datasets downloaded: {len(members)}."
+            )
+            self.after(
+                0, lambda: self.status.set(
+                    f"Specs synchronized - {len(members)} dataset(s)"
+                )
+            )
+        except Exception as exc:
+            self.write_box(f"Sync Specs ERROR: {exc}")
+            self.after(
+                0, lambda msg=str(exc): messagebox.showerror(
+                    "Sync Specs", msg, parent=self
+                )
+            )
+            self.after(0, lambda: self.status.set("Sync Specs failed"))
+        finally:
+            if sas is not None:
+                try:
+                    sas.endsas()
+                except Exception:
+                    pass
+            self.cleanup_runtime_config()
+            self.running = False
+            self.after(0, lambda: self.syncspecbtn.configure(state="normal"))
+            self.after(0, lambda: self.runbtn.configure(state="normal"))
 
     def clear_execution_window(self):
         self.box.configure(state="normal")
@@ -1423,7 +1618,7 @@ class SASPyStudio(tk.Tk):
     @staticmethod
     def snapshot_remote_sas_datasets(sas):
         """
-        Snapshot permanent RAW/SDTM/ADAM members currently visible to SAS.
+        Snapshot permanent RAW/SDTM/ADAM/SPEC members currently visible to SAS.
 
         MODATE detects overwritten datasets; NOBS/NVAR are included as
         additional change indicators. The returned keys are (LIBNAME, MEMNAME).
@@ -1438,7 +1633,7 @@ class SASPyStudio(tk.Tk):
             "         nobs,\n"
             "         nvar\n"
             "  from dictionary.tables\n"
-            "  where upcase(libname) in ('RAW','SDTM','ADAM')\n"
+            "  where upcase(libname) in ('RAW','SDTM','ADAM','SPEC')\n"
             "    and upcase(memtype)='DATA'\n"
             "  order by libname, memname;\n"
             "quit;\n"
